@@ -1,0 +1,17 @@
+{
+  "name": "passionfruit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web portfolio inspired by the beauty of the passionfruit",
+  "type": "module",
+  "scripts": {
+    "dev": "esbuild src/main.js --bundle --format=esm --sourcemap --outdir=dist --servedir=. --serve=5173",
+    "build": "esbuild src/main.js --bundle --format=esm --minify --outdir=dist && esbuild src/embed.js --bundle --format=iife --minify --outfile=dist/passionfruit-scene.js"
+  },
+  "dependencies": {
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "passionfruit-dev",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["esbuild", "src/main.js", "--bundle", "--format=esm", "--sourcemap", "--outdir=dist", "--servedir=.", "--serve=5173"],
+      "port": 5173
+    }
+  ]
+}
