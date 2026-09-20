@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
-import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 
 // Seamless studio sweeps. `bg` is both the clear colour and the fog colour so
 // the floor dissolves into the backdrop without a horizon line.
+// Everything the fruit's own lights touch sits on this layer; the floor does not.
+export const FRUIT_LAYER = 1;
+
 export const BACKDROPS = {
   // Almost nothing shines on the night set: the fruit lights it.
   night: {
@@ -73,107 +74,6 @@ function createStudioEnvironment(renderer) {
   return rt;
 }
 
-// Soft grounding shadow in the style of three.js' contact-shadow example: the
-// casters are rendered from below into a depth-darkness texture and blurred.
-class ContactShadow {
-  constructor(renderer, { size = 9, resolution = 768, height = 1.5, blur = 2.8 } = {}) {
-    this.renderer = renderer;
-    this.blur = blur;
-    this.group = new THREE.Group();
-    this.group.position.y = 0.0012;
-    const opts = { type: THREE.HalfFloatType };
-    this.rt = new THREE.WebGLRenderTarget(resolution, resolution, opts);
-    this.rt.texture.generateMipmaps = false;
-    this.rtBlur = new THREE.WebGLRenderTarget(resolution, resolution, opts);
-    this.rtBlur.texture.generateMipmaps = false;
-
-    const planeGeo = new THREE.PlaneGeometry(size, size).rotateX(Math.PI / 2);
-    this.material = new THREE.MeshBasicMaterial({
-      map: this.rt.texture,
-      transparent: true,
-      depthWrite: false,
-      opacity: 0.6,
-    });
-    this.plane = new THREE.Mesh(planeGeo, this.material);
-    this.plane.renderOrder = 1;
-    this.plane.scale.y = -1;
-    this.group.add(this.plane);
-
-    this.blurPlane = new THREE.Mesh(planeGeo);
-    this.blurPlane.visible = false;
-    this.group.add(this.blurPlane);
-
-    this.camera = new THREE.OrthographicCamera(-size / 2, size / 2, size / 2, -size / 2, 0, height);
-    this.camera.rotation.x = Math.PI / 2;
-    this.camera.layers.set(2);
-    this.group.add(this.camera);
-
-    this.depthMaterial = new THREE.MeshDepthMaterial();
-    this.depthMaterial.userData.darkness = { value: 1.35 };
-    this.depthMaterial.onBeforeCompile = (shader) => {
-      shader.uniforms.darkness = this.depthMaterial.userData.darkness;
-      shader.fragmentShader = `uniform float darkness;\n${shader.fragmentShader.replace(
-        'gl_FragColor = vec4( vec3( 1.0 - fragCoordZ ), opacity );',
-        'gl_FragColor = vec4( vec3( 0.0 ), ( 1.0 - fragCoordZ ) * darkness );',
-      )}`;
-    };
-    this.depthMaterial.depthTest = false;
-    this.depthMaterial.depthWrite = false;
-
-    this.hBlur = new THREE.ShaderMaterial(HorizontalBlurShader);
-    this.hBlur.depthTest = false;
-    this.vBlur = new THREE.ShaderMaterial(VerticalBlurShader);
-    this.vBlur.depthTest = false;
-  }
-
-  blurPass(amount) {
-    const r = this.renderer;
-    this.blurPlane.visible = true;
-    this.blurPlane.material = this.hBlur;
-    this.hBlur.uniforms.tDiffuse.value = this.rt.texture;
-    this.hBlur.uniforms.h.value = amount / 256;
-    r.setRenderTarget(this.rtBlur);
-    r.render(this.blurPlane, this.camera);
-    this.blurPlane.material = this.vBlur;
-    this.vBlur.uniforms.tDiffuse.value = this.rtBlur.texture;
-    this.vBlur.uniforms.v.value = amount / 256;
-    r.setRenderTarget(this.rt);
-    r.render(this.blurPlane, this.camera);
-    this.blurPlane.visible = false;
-  }
-
-  render(scene) {
-    const r = this.renderer;
-    const bg = scene.background;
-    const fog = scene.fog;
-    const clearAlpha = r.getClearAlpha();
-    scene.background = null;
-    scene.fog = null;
-    scene.overrideMaterial = this.depthMaterial;
-    r.setClearAlpha(0);
-    r.setRenderTarget(this.rt);
-    r.clear();
-    r.render(scene, this.camera);
-    scene.overrideMaterial = null;
-    this.blurPass(this.blur);
-    this.blurPass(this.blur * 0.4);
-    r.setRenderTarget(null);
-    r.setClearAlpha(clearAlpha);
-    scene.background = bg;
-    scene.fog = fog;
-  }
-
-  dispose() {
-    this.rt.dispose();
-    this.rtBlur.dispose();
-    this.plane.geometry.dispose();
-    this.material.dispose();
-    this.depthMaterial.dispose();
-    this.hBlur.dispose();
-    this.vBlur.dispose();
-  }
-}
-
 export class Stage {
   constructor(renderer, scene, materials) {
     this.renderer = renderer;
@@ -191,20 +91,17 @@ export class Stage {
     this.ground.receiveShadow = true;
     scene.add(this.ground);
 
+    // The follow spot lights the fruit alone (layer 1): pointed at a floor it
+    // would paint a pool of light across the dark.
     this.key = new THREE.SpotLight('#fff6ee', 3, 0, 0.5, 1, 0);
     this.key.position.set(-4.6, 10.5, 6.2);
     this.key.target.position.set(0.2, 0, 0);
-    this.key.castShadow = true;
-    this.key.shadow.mapSize.set(2048, 2048);
-    this.key.shadow.camera.near = 6;
-    this.key.shadow.camera.far = 24;
-    this.key.shadow.bias = -0.0002;
-    this.key.shadow.normalBias = 0.02;
-    this.key.shadow.radius = 5;
+    this.key.layers.set(FRUIT_LAYER);
     scene.add(this.key, this.key.target);
 
     this.rim = new THREE.DirectionalLight('#eef0ff', 1.4);
     this.rim.position.set(6, 5, -7.5);
+    this.rim.layers.set(FRUIT_LAYER);
     scene.add(this.rim);
 
     this.hemi = new THREE.HemisphereLight('#fff7ea', '#e0d4c2', 0.5);
@@ -212,13 +109,8 @@ export class Stage {
 
     // The light the fruit itself throws: a warm point source carried by the
     // pulp, dim while the skin still holds it in, fierce when it bursts.
-    // No shadow of its own: on a floor this dark it would cost six extra
-    // passes a frame and show almost nothing.
     this.glow = new THREE.PointLight('#ffb24d', 0, 0, 2);
     scene.add(this.glow);
-
-    this.contact = new ContactShadow(renderer);
-    scene.add(this.contact.group);
   }
 
   applyBackdrop(name, materials) {
@@ -232,10 +124,8 @@ export class Stage {
     this.hemi.groundColor.set(b.floor);
     this.hemi.intensity = b.hemi;
     this.key.intensity = b.key;
-    this.key.shadow.intensity = b.keyShadow;
     this.rim.intensity = b.rim;
     this.scene.environmentIntensity = b.env;
-    this.contact.material.opacity = b.shadowOpacity;
     this.renderer.toneMappingExposure = b.exposure;
     this.glowScale = b.glow ?? 0.2;
     // Pulp lit from inside reads as the source of the light.
@@ -248,7 +138,5 @@ export class Stage {
   dispose() {
     this.envRT.dispose();
     this.ground.geometry.dispose();
-    this.key.shadow.dispose();
-    this.contact.dispose();
   }
 }

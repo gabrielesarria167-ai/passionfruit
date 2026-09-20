@@ -3,7 +3,7 @@ Web portfolio inspired by the beauty of the passionfruit
 
 ## The drop
 
-`index.html` is the opening scene: a procedural 3D passionfruit (three.js) falls through a dark studio, bursts on the floor and throws a plume of torn rind, golden pulp, seeds and juice into the air. A follow spot picks the fruit out on the way down; after the burst the pulp itself is the light source, so the black floor is lit by what is lying on it. Everything is generated in code, no model files.
+`index.html` is the opening scene: a procedural 3D passionfruit (three.js) falls through a dark studio, bursts on the floor and throws a plume of torn rind, golden pulp, seeds and juice into the air. A follow spot picks the fruit out on the way down; after the burst the pulp itself is the light source, so the black floor is lit by what is lying on it. One line waits under the fall, and the line that answers it stands inside the scene, so the pieces thrown up cross in front of the words while the camera closes in on them. Everything is generated in code, no model files.
 
 ```sh
 npm install

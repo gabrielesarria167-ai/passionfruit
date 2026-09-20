@@ -2,17 +2,12 @@ import { mount } from './scene/PassionfruitScene.js';
 
 const canvas = document.getElementById('scene');
 const params = new URLSearchParams(location.search);
-// One line before the fruit gives way, another after it.
-const lines = {
-  before: document.querySelector('[data-line="before"]'),
-  after: document.querySelector('[data-line="after"]'),
-};
-const say = (which) => {
-  for (const key of Object.keys(lines)) lines[key].classList.toggle('is-on', key === which);
-};
+// This line sits under the falling fruit and fades out as it gives way; the
+// line that answers it stands inside the scene, behind the burst.
+const before = document.querySelector('[data-line="before"]');
 
 const scene = mount(canvas, {
-  onPhase: (phase) => say(phase === 'open' || phase === 'rest' ? 'after' : 'before'),
+  onPhase: (phase) => before.classList.toggle('is-on', phase !== 'open' && phase !== 'rest'),
   backdrop: params.get('backdrop') || 'night',
   variety: params.get('variety') || 'purple',
   impact: params.get('impact') || 'explode',

@@ -56,8 +56,8 @@ export class JuiceSystem {
     this.splats = createJellyInstances(this.splatGeometry, materials.splat, MAX_SPLATS, 1);
     this.pieces = createJellyInstances(arilGeometry, materials.aril, MAX_PIECES, 5);
     this.pieceSeeds = new THREE.InstancedMesh(seedGeometry, materials.seed, MAX_PIECES);
-    this.pieceSeeds.receiveShadow = true;
-    this.pieces.shine.layers.enable(2);
+    this.pieceSeeds.layers.enable(1);
+    this.pieces.filter.layers.enable(1);
     this.meshes = [...this.drops.meshes, ...this.splats.meshes, ...this.pieces.meshes, this.pieceSeeds];
     for (const mesh of this.meshes) {
       mesh.frustumCulled = false;

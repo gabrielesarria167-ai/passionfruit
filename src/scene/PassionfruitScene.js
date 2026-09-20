@@ -4,11 +4,13 @@ import { FruitModel } from './fruitModel.js';
 import { FruitSimulation, GRAVITY, STEP } from './simulation.js';
 import { JuiceSystem } from './juice.js';
 import { buildShards } from './shards.js';
-import { Stage } from './stage.js';
+import { Stage, FRUIT_LAYER } from './stage.js';
+import { TextPlane } from './textPlane.js';
 import { mulberry32 } from './noise.js';
 import { ARIL_RADII } from './fruitModel.js';
 
 const DEG = Math.PI / 180;
+const LINE_WIDTH = 5.6;
 const ORIGIN = new THREE.Vector3();
 const ONE = new THREE.Vector3(1, 1, 1);
 const _offset = new THREE.Matrix4();
@@ -22,6 +24,7 @@ export const DEFAULT_OPTIONS = {
   impact: 'explode',
   slowMotion: true,
   autoReplay: false,
+  line: 'But passion drives us forward',
 };
 
 const smoothstep = (e0, e1, x) => {
@@ -44,9 +47,6 @@ export class PassionfruitScene {
     renderer.resetState();
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NeutralToneMapping;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
-    renderer.shadowMap.autoUpdate = false;
     this.dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     renderer.setPixelRatio(this.dpr);
     this.renderer = renderer;
@@ -107,9 +107,7 @@ export class PassionfruitScene {
     const placement = model.stemPlacement();
     stem.position.copy(placement.position);
     stem.rotation.copy(placement.rotation);
-    stem.castShadow = true;
-    stem.receiveShadow = true;
-    stem.layers.enable(2);
+    stem.layers.enable(FRUIT_LAYER);
 
     const tint = new THREE.Color();
     const pale = new THREE.Color(1, 1, 1);
@@ -123,25 +121,22 @@ export class PassionfruitScene {
 
       const shellGeo = model.buildShell(model.outerR, model.thetaOut, side, model.segV);
       const shell = new THREE.Mesh(shellGeo, m.skin);
-      shell.castShadow = true;
-      shell.receiveShadow = true;
-      shell.layers.enable(2);
+      shell.layers.enable(FRUIT_LAYER);
 
       const liningGeo = model.buildShell(model.innerR, model.thetaIn, side, 36, { inward: true, uvX: 1 });
       const lining = new THREE.Mesh(liningGeo, m.pith);
-      lining.receiveShadow = true;
+      lining.layers.enable(FRUIT_LAYER);
 
       const rimGeo = model.buildRimStrip(side);
       const rim = new THREE.Mesh(rimGeo, m.pith);
-      rim.castShadow = true;
-      rim.receiveShadow = true;
+      rim.layers.enable(FRUIT_LAYER);
 
       const jellyGeo = model.buildJelly(side);
       const jelly = new THREE.Mesh(jellyGeo, m.jelly.filter);
       jelly.renderOrder = 1;
       const jellyShine = new THREE.Mesh(jellyGeo, m.jelly.shine);
       jellyShine.renderOrder = 2;
-      jellyShine.receiveShadow = true;
+      jellyShine.layers.enable(FRUIT_LAYER);
       jellyShine.name = 'jelly';
 
       shell.name = 'shell';
@@ -163,13 +158,14 @@ export class PassionfruitScene {
         arils.commit();
         for (const mesh of arils.meshes) {
           mesh.name = 'arils';
+          mesh.layers.enable(FRUIT_LAYER);
           content.add(mesh);
         }
       });
       const seeds = new THREE.InstancedMesh(this.seedGeo, m.seed, pulp.seeds.length);
       pulp.seeds.forEach((mat, i) => seeds.setMatrixAt(i, mat));
       seeds.name = 'seeds';
-      seeds.receiveShadow = true;
+      seeds.layers.enable(FRUIT_LAYER);
       seeds.computeBoundingSphere();
       content.add(seeds);
 
@@ -185,15 +181,13 @@ export class PassionfruitScene {
       content.position.copy(body.com).negate();
       group.add(content);
       const mesh = new THREE.Mesh(shard.geometry, [m.skin, m.pith]);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.layers.enable(2);
+      mesh.layers.enable(FRUIT_LAYER);
       mesh.name = 'shard';
       content.add(mesh);
       this.geometries.push(shard.geometry);
       if (shard.hasStem) {
         const s = stem.clone();
-        s.layers.enable(2);
+        s.layers.enable(FRUIT_LAYER);
         content.add(s);
       }
       group.visible = false;
@@ -202,6 +196,13 @@ export class PassionfruitScene {
     });
 
     this._buildCling();
+
+    // The line the burst reveals stands in the scene, upright and behind the
+    // plume, so the pieces thrown up cross in front of the words.
+    this.line = new TextPlane({ text: this.options.line, width: LINE_WIDTH });
+    this.line.mesh.position.set(0, 2.5, -1);
+    this.scene.add(this.line.mesh);
+
     this.sim.placeWhole(new THREE.Vector3(0, 60, 0), new THREE.Quaternion());
   }
 
@@ -234,9 +235,10 @@ export class PassionfruitScene {
     this.cling = entries;
     this.clingArils = createJellyInstances(this.looseArilGeo, m.aril, entries.length, 3);
     this.clingSeeds = new THREE.InstancedMesh(this.looseSeedGeo, m.seed, entries.length);
-    this.clingSeeds.receiveShadow = true;
+    this.clingSeeds.layers.enable(FRUIT_LAYER);
     const tint = new THREE.Color();
     entries.forEach((e, i) => this.clingArils.setColorAt(i, tint.setRGB(1, 1, 1).lerp(new THREE.Color(1, 0.8, 0.6), e.tint * 0.7)));
+    for (const mesh of this.clingArils.meshes) mesh.layers.enable(FRUIT_LAYER);
     for (const mesh of [...this.clingArils.meshes, this.clingSeeds]) {
       mesh.frustumCulled = false;
       mesh.count = 0;
@@ -434,9 +436,9 @@ export class PassionfruitScene {
     if (this.phase === 'open' || this.phase === 'rest') {
       const t = this.realTime - this.impactReal;
       const burst = this.sim.mode !== 'split';
-      const hold = burst ? 1.3 : 0.55;
-      const back = burst ? 3.6 : 1.75;
-      const slow = burst ? 0.1 : 0.24;
+      const hold = burst ? 2.4 : 0.55;
+      const back = burst ? 7 : 1.75;
+      const slow = burst ? 0.075 : 0.24;
       if (t < hold) return slow;
       if (t < back) return slow + (1 - slow) * smoothstep(hold, back, t);
     }
@@ -488,6 +490,12 @@ export class PassionfruitScene {
     else p.copy(this.burstCentre);
     light.position.set(p.x, Math.max(0.22, p.y), p.z);
     light.intensity = (26 + 95 * Math.exp(-since * 1.1)) * scale;
+  }
+
+  // 0 before the burst, 1 once the camera has settled on the line.
+  _focus() {
+    if (this.impactReal < 0 || this.sim.mode === 'split') return 0;
+    return smoothstep(0.5, 4.2, this.realTime - this.impactReal);
   }
 
   _stepSim(h) {
@@ -550,8 +558,20 @@ export class PassionfruitScene {
     const needV = burst ? Math.max(flat, portrait ? 2.4 : 3.6) : flat;
     // A very narrow or short frame would otherwise push the camera far enough
     // back to lose the fruit altogether: hold it in and crop the scatter.
-    const dist = Math.min(Math.max(needV / tanV, reach / (tanV * aspect)), burst ? 16 : 14);
-    const target = new THREE.Vector3(0, burst ? (portrait ? 0.8 : 1.05) : 0.12, 0);
+    const wide = Math.min(Math.max(needV / tanV, reach / (tanV * aspect)), burst ? 16 : 14);
+    // The line is sized to the widest shot it has to fit in, and the camera
+    // then closes in until it nearly spans the frame.
+    const halfW = (d) => tanV * aspect * d;
+    const lineWidth = Math.min(LINE_WIDTH, 1.64 * halfW(wide));
+    this.line.mesh.scale.setScalar(lineWidth / LINE_WIDTH);
+    const close = Math.min(wide, Math.max(lineWidth / (1.72 * tanV * aspect), 1.9 / tanV));
+    const f = this._focus();
+    const dist = THREE.MathUtils.lerp(wide, close, f);
+    const target = new THREE.Vector3(
+      0,
+      THREE.MathUtils.lerp(burst ? (portrait ? 0.8 : 1.05) : 0.12, 2.0, f),
+      THREE.MathUtils.lerp(0, -0.7, f),
+    );
     this.camera.position.set(target.x, target.y + dist * Math.sin(elev), target.z + dist * Math.cos(elev));
     this.camera.lookAt(target);
     this.camera.updateMatrixWorld();
@@ -594,6 +614,9 @@ export class PassionfruitScene {
     }
     this._syncVisuals();
     this._updateGlow();
+    this.line.opacity = this.impactReal < 0 || this.sim.mode === 'split'
+      ? 0
+      : 0.96 * smoothstep(0.45, 1.9, this.realTime - this.impactReal);
 
     this._updateCamera();
 
@@ -611,8 +634,6 @@ export class PassionfruitScene {
   }
 
   _render(moving) {
-    if (moving || this.renderFrames > 0) this.stage.contact.render(this.scene);
-    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -642,6 +663,7 @@ export class PassionfruitScene {
       if (o.isInstancedMesh) o.dispose();
     });
     this.juice.dispose();
+    this.line.dispose();
     this.stage.dispose();
     this.materials.dispose();
     this.renderer.dispose();

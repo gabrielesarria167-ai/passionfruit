@@ -426,7 +426,7 @@ export function createJellyInstances(geometry, pair, count, renderOrder) {
   shine.instanceMatrix = filter.instanceMatrix;
   filter.renderOrder = renderOrder;
   shine.renderOrder = renderOrder + 1;
-  shine.receiveShadow = true;
+  shine.layers.enable(1); // lit by the fruit's own lights
   return {
     filter,
     shine,
