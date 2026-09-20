@@ -11,6 +11,7 @@ import { ARIL_RADII } from './fruitModel.js';
 
 const DEG = Math.PI / 180;
 const LINE_WIDTH = 5.6;
+const OPENER_WIDTH = 2.9;
 // Seconds after the impact: the camera's move in, then the line arriving.
 const FOCUS_IN = 0.3;
 const FOCUS_SET = 1.7;
@@ -29,6 +30,7 @@ export const DEFAULT_OPTIONS = {
   slowMotion: true,
   autoReplay: false,
   line: 'But passion drives us forward',
+  opener: 'We don\u2019t have to do it',
 };
 
 const smoothstep = (e0, e1, x) => {
@@ -201,10 +203,16 @@ export class PassionfruitScene {
 
     this._buildCling();
 
-    // The line the burst reveals stands in the scene, upright and behind the
-    // plume, so the pieces thrown up cross in front of the words.
+    // Both lines stand in the scene rather than on top of it. The first waits
+    // low, under the fall, and the camera simply leaves it behind; the second
+    // is high and behind the plume, so the pieces cross in front of the words.
+    this.opener = new TextPlane({ text: this.options.opener, width: OPENER_WIDTH });
+    this.opener.mesh.position.set(0, 0.16, 4.2);
+    this.opener.opacity = 0.9;
+    this.scene.add(this.opener.mesh);
+
     this.line = new TextPlane({ text: this.options.line, width: LINE_WIDTH });
-    this.line.mesh.position.set(0, 2.5, -1);
+    this.line.mesh.position.set(0, 2.9, -1);
     this.scene.add(this.line.mesh);
 
     this.sim.placeWhole(new THREE.Vector3(0, 60, 0), new THREE.Quaternion());
@@ -563,17 +571,18 @@ export class PassionfruitScene {
     // A very narrow or short frame would otherwise push the camera far enough
     // back to lose the fruit altogether: hold it in and crop the scatter.
     const wide = Math.min(Math.max(needV / tanV, reach / (tanV * aspect)), burst ? 16 : 14);
-    // The line is sized to the widest shot it has to fit in, and the camera
-    // then closes in until it nearly spans the frame.
+    // The camera always closes in by a good margin — enough to leave the first
+    // line behind — and the second line is sized to fill that final shot.
     const halfW = (d) => tanV * aspect * d;
-    const lineWidth = Math.min(LINE_WIDTH, 1.64 * halfW(wide));
+    const close = Math.min(wide * 0.72, Math.max(LINE_WIDTH / (1.72 * tanV * aspect), 1.9 / tanV));
+    const lineWidth = Math.min(LINE_WIDTH, 1.72 * halfW(close));
     this.line.mesh.scale.setScalar(lineWidth / LINE_WIDTH);
-    const close = Math.min(wide, Math.max(lineWidth / (1.72 * tanV * aspect), 1.9 / tanV));
+    this.opener.mesh.scale.setScalar(Math.min(1, (1.5 * halfW(wide)) / OPENER_WIDTH));
     const f = this._focus();
     const dist = THREE.MathUtils.lerp(wide, close, f);
     const target = new THREE.Vector3(
       0,
-      THREE.MathUtils.lerp(burst ? (portrait ? 0.8 : 1.05) : 0.12, 2.0, f),
+      THREE.MathUtils.lerp(burst ? (portrait ? 0.8 : 1.05) : 0.12, 2.1, f),
       THREE.MathUtils.lerp(0, -0.7, f),
     );
     this.camera.position.set(target.x, target.y + dist * Math.sin(elev), target.z + dist * Math.cos(elev));
@@ -668,6 +677,7 @@ export class PassionfruitScene {
       if (o.isInstancedMesh) o.dispose();
     });
     this.juice.dispose();
+    this.opener.dispose();
     this.line.dispose();
     this.stage.dispose();
     this.materials.dispose();

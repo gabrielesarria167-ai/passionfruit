@@ -16,7 +16,7 @@ export const SPLIT = {
 
 // Tuning for the burst.
 export const EXPLODE = {
-  speed: 1.9, // outward speed of the rind pieces
+  speed: 3.1, // outward speed of the rind pieces
   lift: 6.8, // upward kick: the burst throws everything skyward
   spin: 7, // rad/s tumble
 };
