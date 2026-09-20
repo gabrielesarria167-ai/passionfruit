@@ -78,6 +78,7 @@ export class PassionfruitScene {
     this.dropCount = 0;
     this.burstCentre = new THREE.Vector3(0, 1, 0);
     this.visible = true;
+    this.observerWorks = false;
     this.renderFrames = 2;
     this.frameTimes = [];
     this.lastNow = null;
@@ -293,8 +294,14 @@ export class PassionfruitScene {
     this.resizeObserver = new ResizeObserver(this._onResize);
     this.resizeObserver.observe(this.canvas);
 
+    // Some hosts draw the page in a way the observer cannot measure and report
+    // the canvas as permanently offscreen. Only an observer that has seen it on
+    // screen at least once is allowed to pause the loop.
     this.intersection = new IntersectionObserver((entries) => {
-      for (const e of entries) this.visible = e.isIntersecting;
+      for (const e of entries) {
+        if (e.isIntersecting) this.observerWorks = true;
+        this.visible = e.isIntersecting || !this.observerWorks;
+      }
       if (this.visible) this.renderFrames = Math.max(this.renderFrames, 2);
     });
     this.intersection.observe(this.canvas);
