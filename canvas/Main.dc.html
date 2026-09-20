@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Passionfruit burst</title>
+<script src="./support.js"></script>
+<script src="/_blob/c869f5b5e3fe85c4d9a1da03bedccf47"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Gloock&amp;family=Instrument+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0a0709;font-family:'Instrument Sans',system-ui,sans-serif}
+button:focus-visible{outline:2px solid currentColor;outline-offset:3px}
+</style>
+</helmet>
+<main style="position: relative; width: 100%; height: 100vh; min-height: 560px; overflow: hidden; background: {{bg}}; color: {{ink}};">
+<canvas ref="{{canvasRef}}" role="img" aria-label="A purple passionfruit falls onto a dark surface and bursts, throwing torn rind, golden pulp, dark seeds and juice into the air." style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;"></canvas>
+<div style="position: absolute; top: 28px; left: 40px; right: 40px; display: flex; align-items: baseline; justify-content: space-between; gap: 24px; pointer-events: none;">
+<h1 style="margin: 0; font-family: 'Gloock', Georgia, serif; font-size: 30px; font-weight: 400; line-height: 1.1; letter-spacing: 0.005em;">Passionfruit</h1>
+</div>
+<sc-if value="{{note}}" hint-placeholder-val="{{ false }}">
+<p style="position: absolute; left: 24px; right: 24px; top: 50%; margin: 0; text-align: center; font-family: 'Instrument Sans', system-ui, sans-serif; font-size: 14px; line-height: 1.5; opacity: 0.8;">{{note}}</p>
+</sc-if>
+<div style="position: absolute; left: 0; right: 0; bottom: 36px; display: flex; justify-content: center; pointer-events: none;">
+<button type="button" onClick="{{replay}}" style="pointer-events: auto; display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 20px 0 16px; border: 1px solid {{line}}; border-radius: 999px; background: {{chip}}; color: {{ink}}; font-family: 'Instrument Sans', system-ui, sans-serif; font-size: 15px; font-weight: 500; line-height: 1; cursor: pointer;">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path></svg>
+<span>Drop again</span>
+</button>
+</div>
+</main>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"backdrop":{"editor":"enum","options":["night","pith","lilac","aubergine"],"default":"night","section":"Scene"},"variety":{"editor":"enum","options":["purple","golden"],"default":"purple","section":"Scene"},"impact":{"editor":"enum","options":["explode","split"],"default":"explode","section":"Scene"},"slowMotion":{"editor":"boolean","default":true,"section":"Motion"},"autoReplay":{"editor":"boolean","default":false,"section":"Motion"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { note: '' };
+    this.canvasRef = React.createRef();
+    this.scene = null;
+    this.tries = 0;
+    this.replay = () => {
+      if (this.scene) this.scene.replay();
+    };
+  }
+
+  sceneOptions() {
+    return {
+      backdrop: this.props.backdrop ?? 'night',
+      variety: this.props.variety ?? 'purple',
+      impact: this.props.impact ?? 'explode',
+      slowMotion: this.props.slowMotion ?? true,
+      autoReplay: this.props.autoReplay ?? false,
+    };
+  }
+
+  componentDidMount() {
+    this.attach();
+  }
+
+  componentDidUpdate() {
+    if (this.scene) this.scene.setOptions(this.sceneOptions());
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this.timer);
+    if (this.scene) this.scene.dispose();
+    this.scene = null;
+  }
+
+  say(note) {
+    if ((this.state && this.state.note) !== note) this.setState({ note: note });
+  }
+
+  // The head loads the scene bundle; where that script is not run, fetch the
+  // same file and evaluate it, so the artboard still has window.PassionfruitScene.
+  library() {
+    if (window.PassionfruitScene) return Promise.resolve(window.PassionfruitScene);
+    if (!window.__pfSceneLoading) {
+      window.__pfSceneLoading = fetch('/_blob/c869f5b5e3fe85c4d9a1da03bedccf47')
+        .then((r) => {
+          if (!r.ok) throw new Error('bundle ' + r.status);
+          return r.text();
+        })
+        .then((src) => {
+          (0, eval)(src);
+          if (!window.PassionfruitScene) throw new Error('bundle ran but defined nothing');
+          return window.PassionfruitScene;
+        });
+    }
+    return window.__pfSceneLoading;
+  }
+
+  attach() {
+    clearTimeout(this.timer);
+    const canvas = this.canvasRef.current;
+    if (!canvas) {
+      if (this.tries++ < 60) this.timer = setTimeout(() => this.attach(), 100);
+      else this.say('The drawing surface never appeared in this view.');
+      return;
+    }
+    this.say('Loading the scene…');
+    this.library().then(
+      (lib) => {
+        try {
+          this.scene = lib.mount(canvas, this.sceneOptions());
+          this.say('');
+        } catch (err) {
+          this.say('The scene could not start: ' + (err && err.message ? err.message : err));
+        }
+      },
+      (err) => {
+        this.say('The scene file could not load: ' + (err && err.message ? err.message : err));
+      },
+    );
+  }
+
+  renderVals() {
+    const themes = {
+      night: { bg: '#0a0709', ink: '#f1e6dc', chip: '#1a1317', line: '#3f3238' },
+      pith: { bg: '#e4d9c8', ink: '#2a0f22', chip: '#efe7dc', line: '#b8a695' },
+      lilac: { bg: '#cbbdd0', ink: '#2a0f22', chip: '#ddd2e0', line: '#9f8fa4' },
+      aubergine: { bg: '#140b12', ink: '#f3e7dc', chip: '#24161f', line: '#54394c' },
+    };
+    const theme = themes[this.sceneOptions().backdrop] || themes.night;
+    return {
+      canvasRef: this.canvasRef,
+      replay: this.replay,
+      note: (this.state && this.state.note) || '',
+      ...theme,
+    };
+  }
+}
+</script>
+</body>
+</html>
