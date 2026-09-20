@@ -376,7 +376,8 @@ export class PassionfruitScene {
       startHeight: this._startHeight(),
       mode: this.options.impact === 'split' ? 'split' : 'explode',
       rand,
-      power: portrait ? 0.72 : 1, // a narrow frame cannot hold a wide scatter
+      // A narrow frame cannot hold a wide scatter.
+      power: this.aspect < 0.62 ? 0.55 : portrait ? 0.72 : 1,
     });
 
     this.phase = 'falling';
@@ -540,7 +541,9 @@ export class PassionfruitScene {
     // plume several units up: the frame has to hold that too.
     const flat = reach * Math.sin(elev) + (portrait ? 1.0 : 0.85);
     const needV = burst ? Math.max(flat, portrait ? 2.4 : 3.6) : flat;
-    const dist = Math.max(needV / tanV, reach / (tanV * aspect));
+    // A very narrow or short frame would otherwise push the camera far enough
+    // back to lose the fruit altogether: hold it in and crop the scatter.
+    const dist = Math.min(Math.max(needV / tanV, reach / (tanV * aspect)), burst ? 16 : 14);
     const target = new THREE.Vector3(0, burst ? (portrait ? 0.8 : 1.05) : 0.12, 0);
     this.camera.position.set(target.x, target.y + dist * Math.sin(elev), target.z + dist * Math.cos(elev));
     this.camera.lookAt(target);
@@ -553,7 +556,10 @@ export class PassionfruitScene {
     this.raf = requestAnimationFrame(this._loop);
     const realDt = this.lastNow === null ? 1 / 60 : Math.min(0.05, (now - this.lastNow) / 1000);
     this.lastNow = now;
-    if (!this.visible || document.hidden) return;
+    // Only an observer that has actually reported the canvas offscreen stops
+    // the loop: hosts that render the page in a hidden document still animate,
+    // and the browser throttles the frames itself.
+    if (!this.visible) return;
     if (this.resizePending) this._resize();
 
     this.realTime += realDt;
