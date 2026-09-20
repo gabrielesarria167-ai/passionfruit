@@ -11,6 +11,10 @@ import { ARIL_RADII } from './fruitModel.js';
 
 const DEG = Math.PI / 180;
 const LINE_WIDTH = 5.6;
+// Seconds after the impact: the camera's move in, then the line arriving.
+const FOCUS_IN = 0.3;
+const FOCUS_SET = 1.7;
+const LINE_LIT = FOCUS_SET + 0.5;
 const ORIGIN = new THREE.Vector3();
 const ONE = new THREE.Vector3(1, 1, 1);
 const _offset = new THREE.Matrix4();
@@ -495,7 +499,7 @@ export class PassionfruitScene {
   // 0 before the burst, 1 once the camera has settled on the line.
   _focus() {
     if (this.impactReal < 0 || this.sim.mode === 'split') return 0;
-    return smoothstep(0.5, 4.2, this.realTime - this.impactReal);
+    return smoothstep(FOCUS_IN, FOCUS_SET, this.realTime - this.impactReal);
   }
 
   _stepSim(h) {
@@ -614,9 +618,10 @@ export class PassionfruitScene {
     }
     this._syncVisuals();
     this._updateGlow();
+    // The words only come up once the camera has arrived.
     this.line.opacity = this.impactReal < 0 || this.sim.mode === 'split'
       ? 0
-      : 0.96 * smoothstep(0.45, 1.9, this.realTime - this.impactReal);
+      : 0.96 * smoothstep(FOCUS_SET, LINE_LIT, this.realTime - this.impactReal);
 
     this._updateCamera();
 
