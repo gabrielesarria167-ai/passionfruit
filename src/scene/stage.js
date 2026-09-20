@@ -7,10 +7,10 @@ import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 export const BACKDROPS = {
   // Almost nothing shines on the night set: the fruit lights it.
   night: {
-    bg: '#050405', floor: '#0c0a0b', hemiSky: '#e8dce4', key: 3.2, rim: 2.6, hemi: 0.04, env: 0.16,
-    shadowOpacity: 0.35, keyShadow: 0.85, exposure: 1.05, glow: 1,
+    bg: '#050405', floor: '#0c0a0b', hemiSky: '#f3e7ef', key: 4.2, rim: 4.4, hemi: 0.09, env: 0.3,
+    shadowOpacity: 0.35, keyShadow: 0.85, exposure: 1.12, glow: 1,
     // A follow spot picks the fruit out of the dark on the way down.
-    keyFall: 20, keyAngle: 0.34,
+    keyFall: 38, keyAngle: 0.34,
   },
   pith: {
     bg: '#e4d9c8', floor: '#ece2d2', hemiSky: '#fff7ea', key: 3.3, rim: 1.4, hemi: 0.55, env: 0.95,
