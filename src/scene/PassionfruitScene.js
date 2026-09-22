@@ -13,8 +13,9 @@ const DEG = Math.PI / 180;
 const LINE_WIDTH = 5.6;
 const OPENER_WIDTH = 2.9;
 // Seconds after the impact: the camera's move in, then the line arriving.
-const FOCUS_IN = 0.3;
-const FOCUS_SET = 1.7;
+// The move starts the instant the fruit lands and settles quickly.
+const FOCUS_IN = 0;
+const FOCUS_SET = 1.70;
 const LINE_LIT = FOCUS_SET + 0.5;
 const ORIGIN = new THREE.Vector3();
 const ONE = new THREE.Vector3(1, 1, 1);
