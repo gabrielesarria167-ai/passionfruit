@@ -96,6 +96,9 @@ const headFragment = /* glsl */ `
     float g = max(vGlow, 0.5);
     float glow = vGlow > 0.0 ? 0.35 * (1.0 - smoothstep(0.2 * g, g, r)) : 0.0;
     vec3 col = uHead * (core + coma) + mix(uHead, uTail, 0.4) * glow;
+    // Ease the coma out before the edge of the sprite, which would otherwise
+    // show round a big head as a faint square.
+    col *= 1.0 - smoothstep(0.6 * vExtent, vExtent, r);
     gl_FragColor = vec4(col * vAlpha, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
