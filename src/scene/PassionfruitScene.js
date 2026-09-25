@@ -21,12 +21,17 @@ const FOCUS_IN = 0;
 const FOCUS_SET = 1.70;
 const LINE_LIT = FOCUS_SET + 0.5;
 // The crossing starts once nine pieces in ten (rind and pulp) have come down,
-// and the line is up. Then time all but stops and the camera sinks and tips
+// the line is up and the slow motion has worn off. Then time all but stops and the camera sinks and tips
 // its gaze down onto the scatter, so the words rise away out of the frame.
 // Night comes up from below: the floor gives way to it, each drop of juice and
-// pulp it reaches lights up and falls into a real star, and each piece of rind
-// catches light and shoots off down and to the right, a comet.
+// pulp it reaches lights up and falls into a real star, and so does most of
+// the rind; the rest catches light and shoots off down and to the right, a
+// comet.
 const LANDED = 0.9;
+// Burst slow motion wears off this many seconds after the impact; the crossing
+// waits until a moment after that.
+const SLOW_BACK = 7;
+const AFTER_SLOW = 0.3;
 // What _crossTime() reads while the pieces are still coming down.
 const PENDING = -1e9;
 const CROSS_MOVE = 2.8;
@@ -49,6 +54,10 @@ const COMET_TAILS = { purple: '#b95c9c', golden: '#e0a043' };
 // A comet's heading on screen, measured from straight down towards the right.
 const COMET_SLANT = 38 * DEG;
 const COMET_SPREAD = 14 * DEG;
+// The share of the rind that becomes comets; the rest turns into stars.
+const COMET_SHARE = 0.25;
+// Seconds after its piece is reached that a comet appears, spread out.
+const COMET_DELAY = [0.3, 2.6];
 const ORIGIN = new THREE.Vector3();
 const _offset = new THREE.Matrix4();
 const _cling = new THREE.Matrix4();
@@ -59,7 +68,6 @@ const _qa = new THREE.Quaternion();
 const _qb = new THREE.Quaternion();
 const _dir = new THREE.Vector3();
 const _now = new THREE.Vector3();
-const _vel = new THREE.Vector3();
 const _ndc = new THREE.Vector3();
 const _fall = new THREE.Vector3();
 const _at = [0, 0];
@@ -537,7 +545,7 @@ export class PassionfruitScene {
       const t = this.realTime - this.impactReal;
       const burst = this.sim.mode !== 'split';
       const hold = burst ? 2.4 : 0.55;
-      const back = burst ? 7 : 1.75;
+      const back = burst ? SLOW_BACK : 1.75;
       const slow = burst ? 0.075 : 0.24;
       if (t < hold) return slow;
       if (t < back) return slow + (1 - slow) * smoothstep(hold, back, t);
@@ -614,7 +622,8 @@ export class PassionfruitScene {
   // floor, or once everything has come to rest.
   _watchLanding() {
     if (this.crossAt !== null || this.reducedMotion || this._crossTime() !== PENDING) return;
-    if (this.realTime - this.impactReal < LINE_LIT) return;
+    const slowEnd = this.options.slowMotion ? (this.sim.mode !== 'split' ? SLOW_BACK : 1.75) + AFTER_SLOW : 0;
+    if (this.realTime - this.impactReal < Math.max(LINE_LIT, slowEnd)) return;
     let n = 0;
     let down = 0;
     for (const b of this.sim.bodies) {
@@ -729,7 +738,8 @@ export class PassionfruitScene {
   }
 
   // Everything that can still turn into sky, gathered the moment the camera
-  // starts to move: the drops and pulp, and the rind.
+  // starts to move: the drops and pulp, and the rind, a few pieces of it as
+  // comets and the rest as stars.
   _beginCrossing() {
     const rand = mulberry32(500 + this.dropCount);
     this.sky.gather(this.camera.fov, this.aspect);
@@ -747,13 +757,29 @@ export class PassionfruitScene {
     const arilR = (ARIL_RADII.x + ARIL_RADII.y + ARIL_RADII.z) / 3;
     for (const src of this.juice.pieceState) if (src.alive) add(src, arilR * src.s, [-2, 5.5], true);
     for (const src of this.juice.dropState) if (src.alive) add(src, src.r, src.r > 0.018 ? [4, 6.5] : null);
-    const shards = this.shardViews.map((view) => ({ view, jitter: (rand() - 0.5) * 0.3, last: null, t0: null, rand: [rand(), rand(), rand(), rand()] }));
+    const shards = [];
+    for (const view of this.shardViews) {
+      if (rand() < COMET_SHARE) {
+        shards.push({ view, jitter: (rand() - 0.5) * 0.3, last: null, t0: null, rand: Array.from({ length: 7 }, rand) });
+        continue;
+      }
+      // A piece of rind turned star is handed over like a drop, and takes one
+      // of the brightest.
+      const src = {
+        alive: true,
+        p: view.body.pos,
+        set keep(v) {
+          view.keep = v;
+        },
+      };
+      add(src, 0.35 * Math.sqrt(view.area), [-2, 3.5], true);
+    }
     this.crossing = { drops, shards, lastReal: this.realTime };
   }
 
   // The night's leading edge sweeps up the frame from the bottom, taking the
   // floor with it. Whatever it passes turns: a drop lights up and falls into
-  // a free star below it, a piece of rind becomes a comet and falls on.
+  // a free star below it, and so does most of the rind; a comet shoots off.
   _handOff(k, front) {
     const { crossing, camera: cam, sky } = this;
     const dt = this.realTime - crossing.lastReal;
@@ -767,8 +793,6 @@ export class PassionfruitScene {
       const dist = _dir.length();
       sky.toSky(_dir.divideScalar(dist), _now);
       const seen = item.last !== null && dt > 0;
-      if (seen) _vel.copy(_now).sub(item.last).divideScalar(dt);
-      else _vel.set(0, 0, 0);
       item.last = (item.last || new THREE.Vector3()).copy(_now);
       if (!open || !seen) return 0;
       _ndc.copy(p).project(cam);
@@ -834,23 +858,25 @@ export class PassionfruitScene {
       if (!dist) continue;
       sh.t0 = this.realTime;
       const size = Math.sqrt(sh.view.area);
-      const [r0, r1, r2, r3] = sh.rand;
-      // Every comet shoots off the same way, down and to the right across the
-      // frame, give or take a little.
+      const [r0, r1, r2, r3, r4, r5, r6] = sh.rand;
+      // The piece goes out, and a moment later its comet streaks across the
+      // new sky: from high on the left, down and to the right like a shooting
+      // star, the same way for all of them give or take a little.
       const slant = COMET_SLANT + COMET_SPREAD * (r3 - 0.5);
       sky.toSky(_fall.set(Math.sin(slant), -Math.cos(slant), 0).applyQuaternion(cam.quaternion), _fall);
-      const cruise = 0.08 + 0.09 * r0;
+      sky.dirOf(-1.15 + 1.2 * r5, 0.25 + 0.8 * r6, _dir);
+      const cruise = 0.36 + 0.18 * r0;
       this.comets.launch({
-        time: this.realTime,
-        dir: _now,
-        speed: Math.max(cruise, _vel.dot(_fall)),
+        time: this.realTime + COMET_DELAY[0] + (COMET_DELAY[1] - COMET_DELAY[0]) * r4,
+        dir: _dir,
+        speed: 1.6 * cruise,
         heading: _fall,
         cruise,
-        glow: Math.min(28, Math.max(2, ((0.6 * size) / dist) * pxPerUnit)),
-        bright: 0.45 + 0.8 * size,
-        size: 0.7 + 1.3 * size,
-        tail: (5 + 7 * r1) * DEG,
-        life: 3.8 + 3 * r2,
+        glow: 0,
+        bright: 0.8 + 0.9 * size,
+        size: 1.8 + 2.4 * size,
+        tail: (12 + 8 * r1) * DEG,
+        life: 2.6 + 1.2 * r2,
       });
     }
   }
