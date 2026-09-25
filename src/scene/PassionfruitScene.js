@@ -28,9 +28,11 @@ const LINE_LIT = FOCUS_SET + 0.5;
 // the rind; the rest catches light and shoots off down and to the right, a
 // comet.
 const LANDED = 0.9;
-// Burst slow motion wears off this many seconds after the impact; the crossing
-// waits until a moment after that.
-const SLOW_BACK = 7;
+// The burst is held almost still while the camera settles on the line, then
+// time comes back to full speed quickly so the pieces come down; the crossing
+// waits until a moment after the hold, and for the pieces.
+const SLOW_HOLD = 2.4;
+const SLOW_BACK = 2.9;
 const AFTER_SLOW = 0.3;
 // What _crossTime() reads while the pieces are still coming down.
 const PENDING = -1e9;
@@ -544,7 +546,7 @@ export class PassionfruitScene {
     if (this.phase === 'open' || this.phase === 'rest') {
       const t = this.realTime - this.impactReal;
       const burst = this.sim.mode !== 'split';
-      const hold = burst ? 2.4 : 0.55;
+      const hold = burst ? SLOW_HOLD : 0.55;
       const back = burst ? SLOW_BACK : 1.75;
       const slow = burst ? 0.075 : 0.24;
       if (t < hold) return slow;
@@ -622,7 +624,7 @@ export class PassionfruitScene {
   // floor, or once everything has come to rest.
   _watchLanding() {
     if (this.crossAt !== null || this.reducedMotion || this._crossTime() !== PENDING) return;
-    const slowEnd = this.options.slowMotion ? (this.sim.mode !== 'split' ? SLOW_BACK : 1.75) + AFTER_SLOW : 0;
+    const slowEnd = this.options.slowMotion ? (this.sim.mode !== 'split' ? SLOW_HOLD : 0.55) + AFTER_SLOW : 0;
     if (this.realTime - this.impactReal < Math.max(LINE_LIT, slowEnd)) return;
     let n = 0;
     let down = 0;
