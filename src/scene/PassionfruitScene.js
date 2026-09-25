@@ -6,6 +6,9 @@ import { JuiceSystem } from './juice.js';
 import { buildShards } from './shards.js';
 import { Stage, FRUIT_LAYER } from './stage.js';
 import { TextPlane } from './textPlane.js';
+import { StarField } from './stars.js';
+import { Comets } from './comets.js';
+import { Veil } from './veil.js';
 import { mulberry32 } from './noise.js';
 import { ARIL_RADII } from './fruitModel.js';
 
@@ -17,12 +20,49 @@ const OPENER_WIDTH = 2.9;
 const FOCUS_IN = 0;
 const FOCUS_SET = 1.70;
 const LINE_LIT = FOCUS_SET + 0.5;
+// The crossing, in seconds after the impact. Once the line has been read time
+// all but stops and the camera sinks and tips its gaze down onto the scatter,
+// so the words rise away out of the frame. Night comes up from below: the
+// floor gives way to it, each drop of juice and pulp it reaches lights up and
+// falls into a real star, and each piece of rind catches light and falls on,
+// a comet.
+const CROSS_START = LINE_LIT + 2.2;
+const CROSS_MOVE = 4.6;
+const SINK = 1.1;
+const DOLLY = 0.6;
+const TILT = 22 * DEG;
+// The night's leading edge crosses the frame from bottom to top.
+const SWEEP_IN = 0.05;
+const SWEEP_OUT = 0.9;
+// How long a drop takes to fall into its star.
+const SETTLE = 2.4;
+// The stars ride with the camera but for a slow drift up the frame, so the
+// drops that become them stay in the shot.
+const SKY_DRIFT = 4 * DEG;
+const SKY_HOLD = 9;
+const SKY_COLOR = '#030409';
+// Without the camera move the crossing is a dissolve through the night.
+const STILL_FADE = 0.8;
+const COMET_TAILS = { purple: '#b95c9c', golden: '#e0a043' };
 const ORIGIN = new THREE.Vector3();
-const ONE = new THREE.Vector3(1, 1, 1);
 const _offset = new THREE.Matrix4();
 const _cling = new THREE.Matrix4();
 const _seedScale = new THREE.Matrix4().makeScale(0.9, 0.9, 0.9);
+const _keep = new THREE.Vector3();
 const _glowAt = new THREE.Vector3();
+const _qa = new THREE.Quaternion();
+const _qb = new THREE.Quaternion();
+const _dir = new THREE.Vector3();
+const _now = new THREE.Vector3();
+const _vel = new THREE.Vector3();
+const _ndc = new THREE.Vector3();
+const _down = new THREE.Vector3();
+const _fall = new THREE.Vector3();
+const _at = [0, 0];
+const _sky = new THREE.Color(SKY_COLOR);
+const _rgbA = { r: 0, g: 0, b: 0 };
+const _rgbB = { r: 0, g: 0, b: 0 };
+const X_AXIS = new THREE.Vector3(1, 0, 0);
 
 export const DEFAULT_OPTIONS = {
   backdrop: 'night',
@@ -30,6 +70,8 @@ export const DEFAULT_OPTIONS = {
   impact: 'explode',
   slowMotion: true,
   autoReplay: false,
+  // 'stars' carries the burst into the night sky; 'none' ends on the line.
+  transition: 'stars',
   line: 'But passion drives us forward',
   opener: 'We don\u2019t have to do it',
 };
@@ -38,11 +80,14 @@ const smoothstep = (e0, e1, x) => {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
   return t * t * (3 - 2 * t);
 };
+// The move: gentle off the mark, a long glide to rest.
+const lift = (u) => smoothstep(0, 1, Math.pow(Math.min(1, Math.max(0, u)), 0.8));
 
 // Renders the drop: a whole fruit falls into frame, hits the surface and either
 // bursts (rind shards, pulp and juice thrown across the floor) or tears in two
 // and the halves roll onto their backs.
-// Phases: loading -> waiting -> falling -> open -> rest.
+// Phases: loading -> waiting -> falling -> open -> rest, or with the
+// transition, open -> sky.
 export class PassionfruitScene {
   constructor(canvas, options = {}) {
     this.canvas = canvas;
@@ -67,7 +112,7 @@ export class PassionfruitScene {
     this.stage.applyBackdrop(this.options.backdrop, this.materials);
 
     this.model = new FruitModel({ seed: 11 });
-    this.sim = new FruitSimulation(this.model, buildShards(this.model, { detail: 32 }));
+    this.sim = new FruitSimulation(this.model, buildShards(this.model, { detail: 52 }));
     this.sim.onSplit = (e) => this._onSplit(e);
     this._buildFruit();
     this.juice = new JuiceSystem({
@@ -78,9 +123,21 @@ export class PassionfruitScene {
     });
     this.scene.add(this.juice.group);
 
+    // The floor goes down between the stars, which it hides, and the glowing
+    // pieces turning into them, which hang in front of it.
+    this.stage.ground.renderOrder = -9;
+    this.sky = new StarField();
+    this.comets = new Comets();
+    this.sky.points.add(this.comets.tails, this.comets.heads);
+    this.scene.add(this.sky.points);
+    this.veil = new Veil(SKY_COLOR);
+    this.scene.add(this.veil.mesh);
+    this.cut = false;
+    this.crossing = null;
+
     this.phase = 'loading';
     this.realTime = 0;
-    this.impactReal = -1;
+    this.impactReal = null;
     this.acc = 0;
     this.dropCount = 0;
     this.burstCentre = new THREE.Vector3(0, 1, 0);
@@ -199,7 +256,7 @@ export class PassionfruitScene {
       }
       group.visible = false;
       this.fruitRoot.add(group);
-      return { body, group };
+      return { body, group, area: shard.area, keep: 1 };
     });
 
     this._buildCling();
@@ -292,7 +349,11 @@ export class PassionfruitScene {
     }
     this.juice.pieceSeeds.setMatrixAt(0, m);
     this.juice.pieceSeeds.count = 1;
+    this.sky.points.visible = true;
+    this.veil.mesh.visible = true;
     this._render(true);
+    this.sky.points.visible = false;
+    this.veil.mesh.visible = false;
     this.juice.reset();
     this.sim.placeWhole(new THREE.Vector3(0, 60, 0), new THREE.Quaternion());
     this._syncVisuals();
@@ -333,10 +394,14 @@ export class PassionfruitScene {
     const h = Math.max(1, this.canvas.clientHeight);
     this.renderer.setPixelRatio(this.dpr);
     this.renderer.setSize(w, h, false);
+    this.viewW = w;
+    this.viewH = h;
     this.aspect = w / h;
     this.camera.aspect = this.aspect;
     this.camera.fov = this.aspect < 0.9 ? 36 : 30;
     this.camera.updateProjectionMatrix();
+    // A narrow frame holds Orion alone; a wide one takes in Sirius as well.
+    this.sky.aim(this.aspect < 0.9 ? 0 : 0.22);
   }
 
   _emitPhase() {
@@ -349,7 +414,10 @@ export class PassionfruitScene {
     const prev = this.options;
     this.options = { ...prev, ...next };
     if (next.variety && next.variety !== prev.variety) this.materials.applyVariety(this.options.variety);
-    if (next.backdrop && next.backdrop !== prev.backdrop) this.stage.applyBackdrop(this.options.backdrop, this.materials);
+    if (next.backdrop && next.backdrop !== prev.backdrop) {
+      this.stage.applyBackdrop(this.options.backdrop, this.materials);
+      if (this.cut) this._nightfall(1);
+    }
     if (this.phase === 'rest' && this.options.autoReplay && !prev.autoReplay) this.restTime = 0;
     this.renderFrames = Math.max(this.renderFrames, 2);
   }
@@ -381,8 +449,9 @@ export class PassionfruitScene {
     this.dropCount++;
     this.juice.reset();
     this.acc = 0;
-    this.impactReal = -1;
+    this.impactReal = null;
     this.restTime = 0;
+    this._leaveSky();
 
     const portrait = this.aspect < 0.9;
     const qImpact = this.sim.impactOrientation({
@@ -438,13 +507,23 @@ export class PassionfruitScene {
     while (this.sim.phase === 'falling' && guard++ < 40000) this._stepSim(STEP);
     for (let i = 0; i < 480 * 8; i++) this._stepSim(STEP);
     this.impactReal = this.realTime - 100;
+    // Without the camera move the crossing is a slow dissolve a few seconds
+    // after the still of the aftermath comes up.
+    this.crossBase = this.realTime + 3;
     this._syncVisuals();
   }
 
   // Real time runs slowest right at the impact, so the burst itself can be
   // watched, then eases back to full speed while the pieces come down.
+  // Just before the camera lifts into the sky time all but stops again, so
+  // what is still in the air hangs there to be turned into stars.
   _timeScale() {
-    if (!this.options.slowMotion || this.reducedMotion) return 1;
+    if (this.reducedMotion) return 1;
+    return this._slowMotion() * (1 - 0.93 * smoothstep(-1.2, 0.2, this._crossTime()));
+  }
+
+  _slowMotion() {
+    if (!this.options.slowMotion) return 1;
     if (this.phase === 'falling') return 0.24 + 0.76 * smoothstep(0.02, 0.95, this.sim.lowestY);
     if (this.phase === 'open' || this.phase === 'rest') {
       const t = this.realTime - this.impactReal;
@@ -467,7 +546,12 @@ export class PassionfruitScene {
     const fruit = this.sim.whole.fruitToWorld(ORIGIN, _glowAt.clone());
     const since = this.realTime - this.impactReal;
 
+    // The set goes dark as its light goes up into the sky.
     const b = this.stage.backdrop;
+    const dim = this.reducedMotion ? 1 : 1 - smoothstep(0.1, 2.4, this._crossTime());
+    this.stage.rim.intensity = b.rim * dim;
+    this.stage.hemi.intensity = b.hemi * dim;
+    this.scene.environmentIntensity = b.env * dim;
     if (b.keyFall !== undefined) {
       const key = this.stage.key;
       if (!open) {
@@ -477,7 +561,7 @@ export class PassionfruitScene {
         // Ease off the fruit and onto the floor once it is no longer one thing.
         const k = 1 - Math.exp(-since * 1.6);
         key.target.position.lerp(this.burstCentre, k).lerp(ORIGIN, k * 0.5);
-        key.intensity = b.key + (b.keyFall - b.key) * Math.exp(-since * 1.3);
+        key.intensity = (b.key + (b.keyFall - b.key) * Math.exp(-since * 1.3)) * dim;
       }
       key.target.updateMatrixWorld();
     }
@@ -502,12 +586,12 @@ export class PassionfruitScene {
     if (n) p.divideScalar(n);
     else p.copy(this.burstCentre);
     light.position.set(p.x, Math.max(0.22, p.y), p.z);
-    light.intensity = (26 + 95 * Math.exp(-since * 1.1)) * scale;
+    light.intensity = (26 + 95 * Math.exp(-since * 1.1)) * scale * dim;
   }
 
   // 0 before the burst, 1 once the camera has settled on the line.
   _focus() {
-    if (this.impactReal < 0 || this.sim.mode === 'split') return 0;
+    if (this.impactReal === null || this.sim.mode === 'split') return 0;
     return smoothstep(FOCUS_IN, FOCUS_SET, this.realTime - this.impactReal);
   }
 
@@ -521,12 +605,13 @@ export class PassionfruitScene {
     const burst = open && this.sim.mode === 'explode';
     const w = this.sim.whole;
     for (const s of this.shardViews) {
-      s.group.visible = burst;
+      s.group.visible = burst && s.keep > 0.001;
       if (burst) {
         s.group.position.copy(s.body.pos);
         s.group.quaternion.copy(s.body.quat);
+        s.group.scale.setScalar(s.keep);
         s.matrix = (s.matrix || new THREE.Matrix4())
-          .compose(s.body.pos, s.body.quat, ONE)
+          .compose(s.body.pos, s.body.quat, _keep.setScalar(s.keep))
           .multiply(_offset.makeTranslation(-s.body.com.x, -s.body.com.y, -s.body.com.z));
       }
     }
@@ -543,6 +628,7 @@ export class PassionfruitScene {
       this.clingArils.count = 0;
       this.clingSeeds.count = 0;
     }
+    if (open) this.juice.sync();
     for (const h of this.halves) {
       h.group.visible = !burst;
       if (open) {
@@ -588,7 +674,232 @@ export class PassionfruitScene {
     );
     this.camera.position.set(target.x, target.y + dist * Math.sin(elev), target.z + dist * Math.cos(elev));
     this.camera.lookAt(target);
+    this._crossCamera(this._crossTime());
     this.camera.updateMatrixWorld();
+  }
+
+  // ------------------------------------------------------------------ crossing
+
+  // Seconds into the crossing (negative before it starts), or -Infinity when
+  // this drop has none.
+  _crossTime() {
+    if (this.options.transition !== 'stars' || this.sim.mode === 'split' || this.impactReal === null) return -Infinity;
+    if (this.reducedMotion) return this.realTime - this.crossBase;
+    return this.realTime - this.impactReal - CROSS_START;
+  }
+
+  // Down: the camera sinks off the line and tips its gaze onto the floor, so
+  // the words rise away out of the top of the frame.
+  _crossCamera(k) {
+    if (k <= 0 || this.reducedMotion) return;
+    const cam = this.camera;
+    const e = lift(k / CROSS_MOVE);
+    cam.position.y -= SINK * e;
+    cam.position.z -= DOLLY * e;
+    cam.quaternion.multiply(_qa.setFromAxisAngle(X_AXIS, -TILT * e));
+  }
+
+  // Everything that can still turn into sky, gathered the moment the camera
+  // starts to move: the drops and pulp, and the rind.
+  _beginCrossing() {
+    const rand = mulberry32(500 + this.dropCount);
+    this.sky.gather(this.camera.fov, this.aspect);
+    this.comets.reset();
+    this.comets.tint = COMET_TAILS[this.options.variety] || COMET_TAILS.purple;
+    const drops = [];
+    const add = (src, radius, mags, pulp = false) => {
+      drops.push({
+        src, radius, mags, pulp, jitter: (rand() - 0.5) * 0.3, fall: rand(), sway: rand() - 0.5,
+        last: null, t0: null, star: -1, spare: false, r0: 0, done: false,
+      });
+    };
+    // The pulp has its pick of the stars; the bigger drops of juice take faint
+    // ones, and the finest mist only sparks and dies.
+    const arilR = (ARIL_RADII.x + ARIL_RADII.y + ARIL_RADII.z) / 3;
+    for (const src of this.juice.pieceState) if (src.alive) add(src, arilR * src.s, [-2, 5.5], true);
+    for (const src of this.juice.dropState) if (src.alive) add(src, src.r, src.r > 0.018 ? [4, 6.5] : null);
+    const shards = this.shardViews.map((view) => ({ view, jitter: (rand() - 0.5) * 0.3, last: null, t0: null, rand: [rand(), rand(), rand()] }));
+    this.crossing = { drops, shards, lastReal: this.realTime };
+  }
+
+  // The night's leading edge sweeps up the frame from the bottom, taking the
+  // floor with it. Whatever it passes turns: a drop lights up and falls into
+  // a free star below it, a piece of rind becomes a comet and falls on.
+  _handOff(k, front) {
+    const { crossing, camera: cam, sky } = this;
+    const dt = this.realTime - crossing.lastReal;
+    crossing.lastReal = this.realTime;
+    const pxPerUnit = this.viewH / 2 / Math.tan((cam.fov * DEG) / 2);
+    const open = !this.cut && k >= SWEEP_IN;
+
+    // Where it is in the sky now, and whether the night has reached it.
+    const look = (item, p) => {
+      _dir.copy(p).sub(cam.position);
+      const dist = _dir.length();
+      sky.toSky(_dir.divideScalar(dist), _now);
+      const seen = item.last !== null && dt > 0;
+      if (seen) _vel.copy(_now).sub(item.last).divideScalar(dt);
+      else _vel.set(0, 0, 0);
+      item.last = (item.last || new THREE.Vector3()).copy(_now);
+      if (!open || !seen) return 0;
+      _ndc.copy(p).project(cam);
+      const inView = _ndc.z < 1 && Math.abs(_ndc.x) < 1.02 && Math.abs(_ndc.y) < 1.02;
+      return inView && _ndc.y < front + item.jitter ? dist : 0;
+    };
+
+    for (const d of crossing.drops) {
+      if (d.done) continue;
+      if (d.t0 === null) {
+        const dist = d.src.alive ? look(d, d.src.p) : 0;
+        if (!dist) continue;
+        d.t0 = this.realTime;
+        d.r0 = Math.min(40, Math.max(1.2, (d.radius / dist) * pxPerUnit));
+        // Sparks fall: each makes for a free star somewhere below it.
+        sky.frameOf(_now, _at);
+        const down = (_at[1] + 1.05) * (0.1 + 0.9 * d.fall);
+        sky.dirOf(_at[0] * 0.9 + 0.3 * d.sway, Math.max(-1, _at[1] - down), _dir);
+        d.star = d.mags ? sky.claim(_dir, d.mags[0], d.mags[1], 8 * DEG) : -1;
+        if (d.star < 0 && d.pulp) d.star = sky.claim(_dir, -2, 6.5, 30 * DEG);
+        // With none left it stays a spark, and dies.
+        d.spare = d.star < 0;
+        if (d.spare) d.star = sky.spare();
+      } else {
+        look(d, d.src.p);
+      }
+      const tau = this.realTime - d.t0;
+      d.src.keep = 1 - smoothstep(0, 0.5, tau);
+      d.done = tau >= SETTLE;
+      if (d.star < 0) continue;
+      if (d.spare) {
+        const fade = smoothstep(0, 1.4, tau);
+        sky.frameOf(_now, _at);
+        sky.dirOf(_at[0], _at[1] - 0.12 * (0.5 + d.fall) * fade, _dir);
+        sky.hold(d.star, _dir, 0, d.r0 * (1 - 0.6 * fade), 1 - fade);
+      } else {
+        const m = smoothstep(0, SETTLE, tau);
+        sky.hold(d.star, _now, m, d.r0 * Math.pow(1 - m, 1.2), 1 - m);
+      }
+    }
+    sky.commit();
+
+    // The puddles drain away into the night.
+    for (const sp of this.juice.splatState) {
+      if (sp.gone === undefined) {
+        if (!open) continue;
+        _ndc.set(sp.x, 0, sp.z).project(cam);
+        if (_ndc.z < 1 && _ndc.y < front + 0.1) sp.gone = this.realTime;
+        else continue;
+      }
+      sp.keep = 1 - smoothstep(0, 0.6, this.realTime - sp.gone);
+    }
+
+    sky.toSky(_down.set(0, -1, 0).applyQuaternion(cam.quaternion), _down);
+    for (const sh of crossing.shards) {
+      const body = sh.view.body;
+      if (sh.t0 !== null) {
+        sh.view.keep = 1 - smoothstep(0, 0.35, this.realTime - sh.t0);
+        continue;
+      }
+      const dist = look(sh, body.pos);
+      if (!dist) continue;
+      sh.t0 = this.realTime;
+      const size = Math.sqrt(sh.view.area);
+      const [r0, r1, r2] = sh.rand;
+      // Let go, it falls on the way it was thrown, out from the burst, and
+      // gathers speed.
+      _fall.set(body.pos.x - this.burstCentre.x, 0, body.pos.z - this.burstCentre.z).normalize().multiplyScalar(3).add(body.vel);
+      _fall.addScaledVector(_dir.copy(body.pos).sub(cam.position).normalize(), -_fall.dot(_dir));
+      sky.toSky(_fall, _fall);
+      _fall.normalize().addScaledVector(_down, 0.9).normalize();
+      this.comets.launch({
+        time: this.realTime,
+        dir: _now,
+        speed: Math.max(0, _vel.dot(_fall)),
+        heading: _fall,
+        cruise: 0.08 + 0.09 * r0,
+        glow: Math.min(28, Math.max(2, ((0.6 * size) / dist) * pxPerUnit)),
+        bright: 0.45 + 0.8 * size,
+        size: 0.7 + 1.3 * size,
+        tail: (5 + 7 * r1) * DEG,
+        life: 3.8 + 3 * r2,
+      });
+    }
+  }
+
+  // The set's own colour gives way to the night's, mixed as the eye sees it
+  // so that a pale set darkens evenly.
+  _nightfall(t) {
+    const bg = this.stage.background;
+    const a = bg.set(this.stage.backdrop.bg).getRGB(_rgbA, THREE.SRGBColorSpace);
+    const b = _sky.getRGB(_rgbB, THREE.SRGBColorSpace);
+    bg.setRGB(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, THREE.SRGBColorSpace);
+    this.scene.fog.color.copy(bg);
+  }
+
+  // Nothing of the set is left in the frame: put it away for good.
+  _enterSky() {
+    this.cut = true;
+    this.fruitRoot.visible = false;
+    this.juice.group.visible = false;
+    this.stage.ground.visible = false;
+    this.opener.mesh.visible = false;
+    this._nightfall(1);
+    this.phase = 'sky';
+    this.restTime = 0;
+    this._emitPhase();
+  }
+
+  _leaveSky() {
+    this.cut = false;
+    this.crossing = null;
+    this.fruitRoot.visible = true;
+    this.juice.group.visible = true;
+    this.stage.ground.visible = true;
+    this.opener.mesh.visible = true;
+    if (this.stage.backdrop) this.stage.applyBackdrop(this.options.backdrop, this.materials);
+    this.materials.ground.setNight(-2, 1);
+    for (const s of this.shardViews) s.keep = 1;
+    this.comets.reset();
+    this.sky.points.visible = false;
+    this.veil.amount = 0;
+  }
+
+  _updateSky() {
+    const k = this._crossTime();
+    const sky = this.sky;
+    sky.points.visible = k >= 0;
+    if (!(k >= 0)) return;
+    if (!this.crossing) this._beginCrossing();
+    const u = sky.uniforms;
+    u.uTime.value = this.realTime;
+    u.uPixelRatio.value = this.dpr;
+    sky.points.position.copy(this.camera.position);
+
+    if (this.reducedMotion) {
+      // A dissolve through the night, and a sky that holds still.
+      sky.frame(this.camera.quaternion);
+      u.uNight.value = 3;
+      u.uReveal.value = 1;
+      u.uTwinkle.value = 0;
+      if (!this.cut && k >= STILL_FADE) this._enterSky();
+      this.veil.amount = 1 - smoothstep(0, STILL_FADE, Math.abs(k - STILL_FADE));
+      sky.points.visible = this.cut;
+      return;
+    }
+
+    const e = lift(k / CROSS_MOVE);
+    sky.frame(_qb.copy(this.camera.quaternion).multiply(_qa.setFromAxisAngle(X_AXIS, -SKY_DRIFT * (1 - e))));
+    sky.points.updateMatrixWorld();
+    const front = -1.15 + 2.3 * ((k - SWEEP_IN) / (SWEEP_OUT - SWEEP_IN));
+    const night = Math.min(3, Math.max(-2, front));
+    u.uNight.value = night;
+    this.materials.ground.setNight(night, this.viewH * this.dpr);
+    this._handOff(k, front);
+    this.comets.update(this.realTime, this.dpr, this.viewW, this.viewH);
+    u.uReveal.value = Math.min(1, Math.max(0, (k - 0.5) / 3.8));
+    u.uTwinkle.value = 0.12;
+    if (!this.cut) this._nightfall(smoothstep(0.2, 2.4, k));
+    if (!this.cut && k >= CROSS_MOVE) this._enterSky();
   }
 
   // ------------------------------------------------------------------ loop
@@ -618,34 +929,47 @@ export class PassionfruitScene {
       if (this.waitTime > 0.45) this._startDrop(false);
     }
 
-    const dt = realDt * this._timeScale();
-    this.acc += dt;
-    let steps = 0;
-    while (this.acc >= STEP && steps < 240) {
-      this._stepSim(STEP);
-      this.acc -= STEP;
-      steps++;
+    // Once the sky has taken over nothing on the floor is seen again.
+    if (!this.cut) {
+      const dt = realDt * this._timeScale();
+      this.acc += dt;
+      let steps = 0;
+      while (this.acc >= STEP && steps < 240) {
+        this._stepSim(STEP);
+        this.acc -= STEP;
+        steps++;
+      }
     }
-    this._syncVisuals();
-    this._updateGlow();
-    // The words only come up once the camera has arrived.
-    this.line.opacity = this.impactReal < 0 || this.sim.mode === 'split'
+    // The words only come up once the camera has arrived, and go as it moves
+    // on; the first line, left behind on the floor, goes with the floor.
+    const leaving = 1 - smoothstep(0.8, 2.2, this._crossTime());
+    this.line.opacity = this.impactReal === null || this.sim.mode === 'split' || this.cut
       ? 0
-      : 0.96 * smoothstep(FOCUS_SET, LINE_LIT, this.realTime - this.impactReal);
+      : 0.96 * smoothstep(FOCUS_SET, LINE_LIT, this.realTime - this.impactReal) * leaving;
+    this.opener.opacity = this.cut ? 0 : 0.9 * (1 - smoothstep(0, 0.5, this._crossTime()));
 
     this._updateCamera();
+    this._updateSky();
+    if (!this.cut) {
+      this._syncVisuals();
+      this._updateGlow();
+    }
 
+    const crossing = Number.isFinite(this._crossTime());
     if (this.phase === 'open') {
-      if (this.sim.asleep && this.juice.settled) {
+      if (!crossing && this.sim.asleep && this.juice.settled) {
         this.phase = 'rest';
         this.restTime = 0;
         this._emitPhase();
       }
-    } else if (this.phase === 'rest') {
+    } else if (this.phase === 'rest' || this.phase === 'sky') {
       this.restTime += realDt;
-      if (this.options.autoReplay && this.restTime > 3.5) this._startDrop(true);
+      const hold = this.phase === 'sky' ? SKY_HOLD : 3.5;
+      if (this.options.autoReplay && this.restTime > hold) this._startDrop(true);
     }
-    return this.phase === 'falling' || this.phase === 'open';
+    // The sky keeps twinkling; held still, it only draws while it dissolves in.
+    const sky = this.phase === 'sky' && (!this.reducedMotion || this.veil.mesh.visible);
+    return this.phase === 'falling' || this.phase === 'open' || sky;
   }
 
   _render(moving) {
@@ -680,6 +1004,9 @@ export class PassionfruitScene {
     this.juice.dispose();
     this.opener.dispose();
     this.line.dispose();
+    this.sky.dispose();
+    this.comets.dispose();
+    this.veil.dispose();
     this.stage.dispose();
     this.materials.dispose();
     this.renderer.dispose();

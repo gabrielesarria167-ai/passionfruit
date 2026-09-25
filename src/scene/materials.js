@@ -415,8 +415,30 @@ function createStemMaterial() {
 
 // A smooth, matte sweep: no texture and no specular, so a light close to the
 // floor spreads as an even pool instead of a streak.
+// The floor can give way to the night: below `night` (a height across the
+// frame, -1 at the bottom to 1 at the top) it is gone, with a grainy edge,
+// and whatever is behind it shows through.
 function createGroundMaterial() {
-  return new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const uniforms = { uNight: { value: -2 }, uViewH: { value: 1 } };
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', 'uniform float uNight;\nuniform float uViewH;\nvoid main() {')
+      .replace(
+        '#include <clipping_planes_fragment>',
+        `#include <clipping_planes_fragment>
+        float pfY = gl_FragCoord.y / uViewH * 2.0 - 1.0;
+        float pfGrain = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453);
+        if (smoothstep(uNight - 0.3, uNight + 0.02, pfY) < pfGrain) discard;`,
+      );
+  };
+  mat.customProgramCacheKey = () => 'pf-ground';
+  mat.setNight = (y, viewH) => {
+    uniforms.uNight.value = y;
+    uniforms.uViewH.value = viewH;
+  };
+  return mat;
 }
 
 // Two instanced meshes (filter + shine) drawing the same instances.

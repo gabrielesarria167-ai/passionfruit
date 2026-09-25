@@ -6,6 +6,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["esbuild", "src/main.js", "--bundle", "--format=esm", "--sourcemap", "--outdir=dist", "--servedir=.", "--serve=5173"],
       "port": 5173
+    },
+    {
+      "name": "passionfruit-dev-5174",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["esbuild", "src/main.js", "--bundle", "--format=esm", "--sourcemap", "--outdir=dist", "--servedir=.", "--serve=5174"],
+      "port": 5174
     }
   ]
 }

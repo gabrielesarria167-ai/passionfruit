@@ -8,6 +8,7 @@ const scene = mount(canvas, {
   impact: params.get('impact') || 'explode',
   slowMotion: params.get('slowmo') !== '0',
   autoReplay: params.get('auto') === '1',
+  transition: params.get('transition') || 'stars',
 });
 
 // ?seek=<seconds> renders a single still of that moment (handy for screenshots).
