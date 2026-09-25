@@ -103,8 +103,11 @@ const vertexShader = /* glsl */ `
     gl_Position = projectionMatrix * modelViewMatrix * vec4(dir * 50.0, 1.0);
 
     float adapt = 0.75 * clamp((aMag + 1.5) / 8.0, 0.0, 1.0);
-    float reveal = partner ? 1.0 : smoothstep(adapt, adapt + 0.25, uReveal);
-    reveal *= 1.0 - smoothstep(uNight - 0.3, uNight + 0.02, gl_Position.y / gl_Position.w);
+    float reveal = 1.0;
+    if (!partner) {
+      reveal = smoothstep(adapt, adapt + 0.25, uReveal);
+      reveal *= 1.0 - smoothstep(uNight - 0.3, uNight + 0.02, gl_Position.y / gl_Position.w);
+    }
 
     // Peak brightness follows the catalogue magnitude (a 3rd-magnitude star
     // just fills the pixel). Past that the core spreads and a halo comes up,
@@ -118,18 +121,25 @@ const vertexShader = /* glsl */ `
     float haloR = 4.0 * uPixelRatio * (1.0 + 0.45 * over);
     float extent = max(3.2 * sigma, halo > 0.0 ? 4.0 * haloR : 0.0);
 
-    // The drop as the camera last saw it, shrinking to its star. It is drawn
-    // in a pass of its own, over the floor it hangs above.
+    // The drop as the camera last saw it, shrinking to its star, and the star
+    // it becomes. Both are drawn in a pass of their own, over the floor, so a
+    // piece that turns while the floor is still there goes straight into a
+    // star instead of behind it; the main pass leaves those stars out.
     float disc = aPulp * uPixelRatio;
     vPulpGain = 0.55 + 0.9 * fract(aSeed * 7.31);
     vGlow = aGlow;
     #ifdef EMBERS
-      if (m >= 1.0 || aGlow <= 0.0) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-        gl_PointSize = 0.0;
-        return;
-      }
-      extent = disc * 2.2 + 1.0;
+      bool drawn = partner;
+    #else
+      bool drawn = !partner;
+    #endif
+    if (!drawn) {
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+      gl_PointSize = 0.0;
+      return;
+    }
+    #ifdef EMBERS
+      extent = max(extent, disc * 2.2 + 1.0);
     #endif
 
     vColor = aColor;
@@ -160,15 +170,14 @@ const fragmentShader = /* glsl */ `
 
   void main() {
     float r = length(gl_PointCoord - 0.5) * 2.0 * vExtent;
+    float star = vPeak * exp(-0.5 * r * r / (vSigma * vSigma)) + vHalo * exp(-r / vHaloR);
+    vec3 col = vColor * star * vM;
     #ifdef EMBERS
       // The drop lit from inside: a hot core in a soft body of light.
       float d = max(vDisc, 0.5);
       float core = exp(-0.5 * r * r / (0.2 * d * d));
       float body = 1.0 - smoothstep(0.45 * d, d, r);
-      vec3 col = uPulp * (0.8 * core + 0.5 * body) * vPulpGain * vGlow * uOpacity;
-    #else
-      float star = vPeak * exp(-0.5 * r * r / (vSigma * vSigma)) + vHalo * exp(-r / vHaloR);
-      vec3 col = vColor * star * vM;
+      col += uPulp * (0.8 * core + 0.5 * body) * vPulpGain * vGlow * uOpacity;
     #endif
     gl_FragColor = vec4(col, 1.0);
     #include <tonemapping_fragment>

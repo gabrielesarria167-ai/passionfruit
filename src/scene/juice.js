@@ -113,6 +113,7 @@ export class JuiceSystem {
       const d = this.dropState[n++];
       d.alive = true;
       d.keep = 1;
+      d.turned = false;
       d.delay = rand() * 0.07;
       d.r = rMin + (rMax - rMin) * Math.pow(rand(), 2.2);
       d.p.copy(center).addScaledVector(dir, 0.93 + 0.12 * rand()).addScaledVector(normal, (rand() - 0.5) * 0.07);
@@ -130,6 +131,7 @@ export class JuiceSystem {
       dir.copy(e2).multiplyScalar(Math.cos(psi)).addScaledVector(e1, Math.sin(psi));
       pc.alive = true;
       pc.keep = 1;
+      pc.turned = false;
       pc.landed = false;
       pc.splatted = false;
       pc.delay = 0.015 + rand() * 0.05;
@@ -177,6 +179,7 @@ export class JuiceSystem {
       const d = this.dropState[n++];
       d.alive = true;
       d.keep = 1;
+      d.turned = false;
       d.delay = rand() * 0.04;
       d.r = rMin + (rMax - rMin) * Math.pow(rand(), 2.2);
       d.p.copy(center).addScaledVector(dir, 0.75 + 0.25 * rand());
@@ -205,6 +208,7 @@ export class JuiceSystem {
       pc.v.y = (slump ? 0.4 * rand() : 2.2 + 5.6 * rand()) * (0.35 + 0.65 * up) * power;
       pc.alive = true;
       pc.keep = 1;
+      pc.turned = false;
       pc.landed = false;
       pc.splatted = false;
       pc.delay = rand() * 0.03;
@@ -216,7 +220,7 @@ export class JuiceSystem {
   }
 
   // `keep` is how much of what made it is still to be seen: a drop already
-  // taken into the sky leaves no mark.
+  // taken into the sky (`turned`) leaves no mark.
   addSplat(x, z, radius, vx, vz, height, grow = 0.08, keep = 1) {
     if (this.splatState.length >= MAX_SPLATS || keep <= 0.001) return;
     const vh = Math.hypot(vx, vz);
@@ -250,7 +254,7 @@ export class JuiceSystem {
         // the number of overlapping splats down.
         if (d.r > 0.009 || this.rand() < 0.4) {
           const spread = d.r * (1.5 + 0.9 * this.rand());
-          this.addSplat(d.p.x, d.p.z, spread, d.v.x, d.v.z, Math.min(0.018, 0.45 * spread), undefined, d.keep);
+          this.addSplat(d.p.x, d.p.z, spread, d.v.x, d.v.z, Math.min(0.018, 0.45 * spread), undefined, d.turned ? 0 : d.keep);
         }
       }
     }
@@ -265,7 +269,7 @@ export class JuiceSystem {
         piece.q.premultiply(_q);
         if (piece.p.y < rest) {
           piece.p.y = rest;
-          if (!piece.splatted) this.addSplat(piece.p.x, piece.p.z, 0.1 * piece.s, piece.v.x, piece.v.z, 0.008, undefined, piece.keep);
+          if (!piece.splatted) this.addSplat(piece.p.x, piece.p.z, 0.1 * piece.s, piece.v.x, piece.v.z, 0.008, undefined, piece.turned ? 0 : piece.keep);
           piece.splatted = true;
           if (piece.v.y < -1.4) {
             piece.v.y *= -0.22;

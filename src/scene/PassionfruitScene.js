@@ -20,29 +20,28 @@ const OPENER_WIDTH = 2.9;
 const FOCUS_IN = 0;
 const FOCUS_SET = 1.70;
 const LINE_LIT = FOCUS_SET + 0.5;
-// The crossing starts once nine pieces in ten (rind and pulp) have come down,
-// the line is up and the slow motion has worn off. Then time all but stops and the camera sinks and tips
-// its gaze down onto the scatter, so the words rise away out of the frame.
-// Night comes up from below: the floor gives way to it, each drop of juice and
-// pulp it reaches lights up and falls into a real star, and so does most of
-// the rind; the rest catches light and shoots off down and to the right, a
-// comet.
-const LANDED = 0.9;
+// The crossing opens as the hold on the line ends. From then on each piece
+// turns on its own, just before it would touch the floor: a drop of juice or
+// pulp lights up and falls into a real star, and so does most of the rind;
+// the rest catches light and comes back as a comet shooting down and to the
+// right. Whatever is still in the air keeps flying until its turn. The camera
+// sinks and tips its gaze down onto the scatter, so the words rise away out of
+// the frame, and night comes up from below as the pieces go, taking the floor.
 // The burst is held almost still while the camera settles on the line, then
-// time comes back to full speed quickly so the pieces come down; the crossing
-// waits until a moment after the hold, and for the pieces.
+// time comes back to full speed quickly so the pieces come down.
 const SLOW_HOLD = 2.4;
 const SLOW_BACK = 2.9;
-const AFTER_SLOW = 0.3;
-// What _crossTime() reads while the pieces are still coming down.
+// How long before it would touch the floor a piece turns, in seconds as seen.
+const LEAD = 0.1;
+// How long a piece takes to shrink away once it has turned: it is gone about
+// as it would have landed.
+const TURN_FADE = 0.15;
+// What _crossTime() reads before the crossing opens.
 const PENDING = -1e9;
 const CROSS_MOVE = 2.8;
 const SINK = 1.1;
 const DOLLY = 0.6;
 const TILT = 22 * DEG;
-// The night's leading edge crosses the frame from bottom to top.
-const SWEEP_IN = 0.05;
-const SWEEP_OUT = 0.6;
 // How long a drop takes to fall into its star.
 const SETTLE = 1.5;
 // The stars ride with the camera but for a slow drift up the frame, so the
@@ -96,6 +95,9 @@ const smoothstep = (e0, e1, x) => {
 };
 // The move: gentle off the mark, a long glide to rest.
 const lift = (u) => smoothstep(0, 1, Math.pow(Math.min(1, Math.max(0, u)), 0.8));
+// Simulated seconds until something `h` above the floor, rising at `vy`,
+// comes down onto it.
+const untilFloor = (h, vy) => (h <= 0 ? 0 : (vy + Math.sqrt(vy * vy + 2 * GRAVITY * h)) / GRAVITY);
 
 // Renders the drop: a whole fruit falls into frame, hits the surface and either
 // bursts (rind shards, pulp and juice thrown across the floor) or tears in two
@@ -532,12 +534,9 @@ export class PassionfruitScene {
 
   // Real time runs slowest right at the impact, so the burst itself can be
   // watched, then eases back to full speed while the pieces come down.
-  // Once the pieces are down and the camera lifts into the sky time all but
-  // stops again, so what is still in the air hangs there to be turned into
-  // stars.
   _timeScale() {
     if (this.reducedMotion) return 1;
-    return this._slowMotion() * (1 - 0.93 * smoothstep(0, 0.5, this._crossTime()));
+    return this._slowMotion();
   }
 
   _slowMotion() {
@@ -566,7 +565,8 @@ export class PassionfruitScene {
 
     // The set goes dark as its light goes up into the sky.
     const b = this.stage.backdrop;
-    const dim = this.reducedMotion ? 1 : 1 - smoothstep(0.1, 1.4, this._crossTime());
+    // What is still flying stays lit until nearly everything has turned.
+    const dim = this.reducedMotion ? 1 : 1 - smoothstep(0.7, 1, this._nightfallen());
     this.stage.rim.intensity = b.rim * dim;
     this.stage.hemi.intensity = b.hemi * dim;
     this.scene.environmentIntensity = b.env * dim;
@@ -620,24 +620,17 @@ export class PassionfruitScene {
     for (const b of this.sim.bodies) if (b.inContact) b.touched = true;
   }
 
-  // Start the crossing once enough of what the burst threw up has touched the
-  // floor, or once everything has come to rest.
-  _watchLanding() {
+  // Open the crossing once the line is up and the hold on it is over.
+  _openCrossing() {
     if (this.crossAt !== null || this.reducedMotion || this._crossTime() !== PENDING) return;
-    const slowEnd = this.options.slowMotion ? (this.sim.mode !== 'split' ? SLOW_HOLD : 0.55) + AFTER_SLOW : 0;
-    if (this.realTime - this.impactReal < Math.max(LINE_LIT, slowEnd)) return;
-    let n = 0;
-    let down = 0;
-    for (const b of this.sim.bodies) {
-      n++;
-      if (b.touched) down++;
-    }
-    for (const p of this.juice.pieceState) {
-      if (!p.alive) continue;
-      n++;
-      if (p.splatted) down++;
-    }
-    if (down >= LANDED * n || (this.sim.asleep && this.juice.settled)) this.crossAt = this.realTime;
+    const hold = this.options.slowMotion ? SLOW_HOLD : 0;
+    if (this.realTime - this.impactReal >= Math.max(LINE_LIT, hold)) this.crossAt = this.realTime;
+  }
+
+  // How far night has come, 0-1: it follows the share of the pieces that
+  // have turned.
+  _nightfallen() {
+    return this.crossing ? this.crossing.shown : 0;
   }
 
   _syncVisuals() {
@@ -739,76 +732,84 @@ export class PassionfruitScene {
     cam.quaternion.multiply(_qa.setFromAxisAngle(X_AXIS, -TILT * e));
   }
 
-  // Everything that can still turn into sky, gathered the moment the camera
-  // starts to move: the drops and pulp, and the rind, a few pieces of it as
-  // comets and the rest as stars.
+  // Everything that can still turn into sky, gathered as the crossing opens:
+  // the drops and pulp, and the rind, a few pieces of it as comets and the
+  // rest as stars. Each knows how long it has before it touches the floor.
   _beginCrossing() {
     const rand = mulberry32(500 + this.dropCount);
     this.sky.gather(this.camera.fov, this.aspect);
     this.comets.reset();
     this.comets.tint = COMET_TAILS[this.options.variety] || COMET_TAILS.purple;
+    const world = this.sim.world;
     const drops = [];
-    const add = (src, radius, mags, pulp = false) => {
-      drops.push({
-        src, radius, mags, pulp, jitter: (rand() - 0.5) * 0.3, fall: rand(), sway: rand() - 0.5,
-        last: null, t0: null, star: -1, spare: false, r0: 0, done: false,
-      });
+    const add = (src, land, radius, mags, pulp = false) => {
+      drops.push({ src, land, radius, mags, pulp, fall: rand(), sway: rand() - 0.5, t0: null, star: -1, spare: false, r0: 0, done: false });
     };
+    const rind = (body) => () => (body.touched || body.sleeping ? 0 : untilFloor(world.lowestPoint(body), body.vel.y));
     // The pulp has its pick of the stars; the bigger drops of juice take faint
     // ones, and the finest mist only sparks and dies.
     const arilR = (ARIL_RADII.x + ARIL_RADII.y + ARIL_RADII.z) / 3;
-    for (const src of this.juice.pieceState) if (src.alive) add(src, arilR * src.s, [-2, 5.5], true);
-    for (const src of this.juice.dropState) if (src.alive) add(src, src.r, src.r > 0.018 ? [4, 6.5] : null);
+    for (const src of this.juice.pieceState) {
+      if (!src.alive) continue;
+      add(src, () => (src.splatted ? 0 : untilFloor(src.p.y - 0.1 * src.s, src.v.y)), arilR * src.s, [-2, 5.5], true);
+    }
+    for (const src of this.juice.dropState) {
+      if (!src.alive) continue;
+      add(src, () => (src.alive ? untilFloor(src.p.y - src.r * 0.6, src.v.y) : 0), src.r, src.r > 0.018 ? [4, 6.5] : null);
+    }
     const shards = [];
     for (const view of this.shardViews) {
+      const land = rind(view.body);
       if (rand() < COMET_SHARE) {
-        shards.push({ view, jitter: (rand() - 0.5) * 0.3, last: null, t0: null, rand: Array.from({ length: 7 }, rand) });
+        shards.push({ view, land, t0: null, rand: Array.from({ length: 7 }, rand) });
         continue;
       }
       // A piece of rind turned star is handed over like a drop, and takes one
       // of the brightest.
       const src = {
-        alive: true,
         p: view.body.pos,
         set keep(v) {
           view.keep = v;
         },
       };
-      add(src, 0.35 * Math.sqrt(view.area), [-2, 3.5], true);
+      add(src, land, 0.35 * Math.sqrt(view.area), [-2, 3.5], true);
     }
-    this.crossing = { drops, shards, lastReal: this.realTime };
+    const total = drops.length + shards.length;
+    this.crossing = { drops, shards, total, turned: 0, shown: 0, lastTurn: this.realTime, lastReal: this.realTime };
   }
 
-  // The night's leading edge sweeps up the frame from the bottom, taking the
-  // floor with it. Whatever it passes turns: a drop lights up and falls into
-  // a free star below it, and so does most of the rind; a comet shoots off.
-  _handOff(k, front) {
+  // Each piece turns just before it would touch the floor: a drop lights up
+  // and falls into a free star below it, and so does most of the rind; a
+  // comet shoots off. Night comes up from the bottom of the frame as they go,
+  // taking the floor and the puddles on it.
+  _handOff(front) {
     const { crossing, camera: cam, sky } = this;
     const dt = this.realTime - crossing.lastReal;
     crossing.lastReal = this.realTime;
     const pxPerUnit = this.viewH / 2 / Math.tan((cam.fov * DEG) / 2);
-    const open = !this.cut && k >= SWEEP_IN;
+    const open = !this.cut;
+    // LEAD in simulated seconds, at the pace time is running now.
+    const lead = LEAD * this._timeScale();
 
-    // Where it is in the sky now, and whether the night has reached it.
-    const look = (item, p) => {
+    // Where it is in the sky now, and how far from the camera.
+    const where = (p) => {
       _dir.copy(p).sub(cam.position);
       const dist = _dir.length();
       sky.toSky(_dir.divideScalar(dist), _now);
-      const seen = item.last !== null && dt > 0;
-      item.last = (item.last || new THREE.Vector3()).copy(_now);
-      if (!open || !seen) return 0;
-      _ndc.copy(p).project(cam);
-      // Pieces lying just off the sides or under the bottom edge still reach
-      // into the frame, close to the camera: they are taken too.
-      const inView = _ndc.z < 1 && Math.abs(_ndc.x) < 1.6 && _ndc.y < 1.02;
-      return inView && _ndc.y < front + item.jitter ? dist : 0;
+      return dist;
+    };
+    const turn = () => {
+      crossing.turned++;
+      crossing.lastTurn = this.realTime;
     };
 
     for (const d of crossing.drops) {
       if (d.done) continue;
       if (d.t0 === null) {
-        const dist = d.src.alive ? look(d, d.src.p) : 0;
-        if (!dist) continue;
+        if (!open || d.land() > lead) continue;
+        const dist = where(d.src.p);
+        turn();
+        d.src.turned = true;
         d.t0 = this.realTime;
         d.r0 = Math.min(40, Math.max(1.2, (d.radius / dist) * pxPerUnit));
         // Sparks fall: each makes for a free star somewhere below it.
@@ -821,10 +822,10 @@ export class PassionfruitScene {
         d.spare = d.star < 0;
         if (d.spare) d.star = sky.spare();
       } else {
-        look(d, d.src.p);
+        where(d.src.p);
       }
       const tau = this.realTime - d.t0;
-      d.src.keep = 1 - smoothstep(0, 0.5, tau);
+      d.src.keep = 1 - smoothstep(0, TURN_FADE, tau);
       d.done = tau >= SETTLE;
       if (d.star < 0) continue;
       if (d.spare) {
@@ -850,14 +851,18 @@ export class PassionfruitScene {
       sp.keep = Math.min(sp.keep, 1 - smoothstep(0, 0.4, this.realTime - sp.gone));
     }
 
+    // Night follows the share of the pieces that have turned, eased.
+    const share = crossing.total ? crossing.turned / crossing.total : 1;
+    crossing.shown += (share - crossing.shown) * (1 - Math.exp(-5 * dt));
+    if (share >= 1 && crossing.shown > 0.995) crossing.shown = 1;
+
     for (const sh of crossing.shards) {
-      const body = sh.view.body;
       if (sh.t0 !== null) {
-        sh.view.keep = 1 - smoothstep(0, 0.35, this.realTime - sh.t0);
+        sh.view.keep = 1 - smoothstep(0, TURN_FADE, this.realTime - sh.t0);
         continue;
       }
-      const dist = look(sh, body.pos);
-      if (!dist) continue;
+      if (!open || sh.land() > lead) continue;
+      turn();
       sh.t0 = this.realTime;
       const size = Math.sqrt(sh.view.area);
       const [r0, r1, r2, r3, r4, r5, r6] = sh.rand;
@@ -947,16 +952,19 @@ export class PassionfruitScene {
     const e = lift(k / CROSS_MOVE);
     sky.frame(_qb.copy(this.camera.quaternion).multiply(_qa.setFromAxisAngle(X_AXIS, -SKY_DRIFT * (1 - e))));
     sky.points.updateMatrixWorld();
-    const front = -1.15 + 2.3 * ((k - SWEEP_IN) / (SWEEP_OUT - SWEEP_IN));
-    const night = Math.min(3, Math.max(-2, front));
-    u.uNight.value = night;
-    this.materials.ground.setNight(night, this.viewH * this.dpr);
-    this._handOff(k, front);
+    const crossing = this.crossing;
+    const front = crossing.shown >= 1 ? 3 : -1.15 + 2.3 * crossing.shown;
+    u.uNight.value = front;
+    this.materials.ground.setNight(front, this.viewH * this.dpr);
+    this._handOff(front);
     this.comets.update(this.realTime, this.dpr, this.viewW, this.viewH);
-    u.uReveal.value = Math.min(1, Math.max(0, (k - 0.3) / 2.2));
+    u.uReveal.value = crossing.shown;
     u.uTwinkle.value = 0.12;
-    if (!this.cut) this._nightfall(smoothstep(0.1, 1.4, k));
-    if (!this.cut && k >= CROSS_MOVE) this._enterSky();
+    if (!this.cut) this._nightfall(smoothstep(0, 1, crossing.shown));
+    // The set goes for good once the camera has arrived and the last piece has
+    // turned and gone; a piece that never comes down cannot hold it forever.
+    const allGone = crossing.turned >= crossing.total && this.realTime - crossing.lastTurn > 0.5;
+    if (!this.cut && k >= CROSS_MOVE && (allGone || k >= CROSS_MOVE + 6)) this._enterSky();
   }
 
   // ------------------------------------------------------------------ loop
@@ -997,7 +1005,7 @@ export class PassionfruitScene {
         steps++;
       }
     }
-    this._watchLanding();
+    this._openCrossing();
     // The words only come up once the camera has arrived, and go as it moves
     // on; the first line, left behind on the floor, goes with the floor.
     const leaving = 1 - smoothstep(0.4, 1.2, this._crossTime());
