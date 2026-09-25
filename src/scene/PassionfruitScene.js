@@ -26,16 +26,16 @@ const LINE_LIT = FOCUS_SET + 0.5;
 // floor gives way to it, each drop of juice and pulp it reaches lights up and
 // falls into a real star, and each piece of rind catches light and falls on,
 // a comet.
-const CROSS_START = LINE_LIT + 2.2;
-const CROSS_MOVE = 4.6;
+const CROSS_START = LINE_LIT + 1.2;
+const CROSS_MOVE = 2.8;
 const SINK = 1.1;
 const DOLLY = 0.6;
 const TILT = 22 * DEG;
 // The night's leading edge crosses the frame from bottom to top.
 const SWEEP_IN = 0.05;
-const SWEEP_OUT = 0.9;
+const SWEEP_OUT = 0.6;
 // How long a drop takes to fall into its star.
-const SETTLE = 2.4;
+const SETTLE = 1.5;
 // The stars ride with the camera but for a slow drift up the frame, so the
 // drops that become them stay in the shot.
 const SKY_DRIFT = 4 * DEG;
@@ -519,7 +519,7 @@ export class PassionfruitScene {
   // what is still in the air hangs there to be turned into stars.
   _timeScale() {
     if (this.reducedMotion) return 1;
-    return this._slowMotion() * (1 - 0.93 * smoothstep(-1.2, 0.2, this._crossTime()));
+    return this._slowMotion() * (1 - 0.93 * smoothstep(-0.8, 0.1, this._crossTime()));
   }
 
   _slowMotion() {
@@ -548,7 +548,7 @@ export class PassionfruitScene {
 
     // The set goes dark as its light goes up into the sky.
     const b = this.stage.backdrop;
-    const dim = this.reducedMotion ? 1 : 1 - smoothstep(0.1, 2.4, this._crossTime());
+    const dim = this.reducedMotion ? 1 : 1 - smoothstep(0.1, 1.4, this._crossTime());
     this.stage.rim.intensity = b.rim * dim;
     this.stage.hemi.intensity = b.hemi * dim;
     this.scene.environmentIntensity = b.env * dim;
@@ -771,7 +771,7 @@ export class PassionfruitScene {
       d.done = tau >= SETTLE;
       if (d.star < 0) continue;
       if (d.spare) {
-        const fade = smoothstep(0, 1.4, tau);
+        const fade = smoothstep(0, 0.9, tau);
         sky.frameOf(_now, _at);
         sky.dirOf(_at[0], _at[1] - 0.12 * (0.5 + d.fall) * fade, _dir);
         sky.hold(d.star, _dir, 0, d.r0 * (1 - 0.6 * fade), 1 - fade);
@@ -790,7 +790,7 @@ export class PassionfruitScene {
         if (_ndc.z < 1 && _ndc.y < front + 0.1) sp.gone = this.realTime;
         else continue;
       }
-      sp.keep = 1 - smoothstep(0, 0.6, this.realTime - sp.gone);
+      sp.keep = Math.min(sp.keep, 1 - smoothstep(0, 0.4, this.realTime - sp.gone));
     }
 
     sky.toSky(_down.set(0, -1, 0).applyQuaternion(cam.quaternion), _down);
@@ -896,9 +896,9 @@ export class PassionfruitScene {
     this.materials.ground.setNight(night, this.viewH * this.dpr);
     this._handOff(k, front);
     this.comets.update(this.realTime, this.dpr, this.viewW, this.viewH);
-    u.uReveal.value = Math.min(1, Math.max(0, (k - 0.5) / 3.8));
+    u.uReveal.value = Math.min(1, Math.max(0, (k - 0.3) / 2.2));
     u.uTwinkle.value = 0.12;
-    if (!this.cut) this._nightfall(smoothstep(0.2, 2.4, k));
+    if (!this.cut) this._nightfall(smoothstep(0.1, 1.4, k));
     if (!this.cut && k >= CROSS_MOVE) this._enterSky();
   }
 
@@ -942,7 +942,7 @@ export class PassionfruitScene {
     }
     // The words only come up once the camera has arrived, and go as it moves
     // on; the first line, left behind on the floor, goes with the floor.
-    const leaving = 1 - smoothstep(0.8, 2.2, this._crossTime());
+    const leaving = 1 - smoothstep(0.4, 1.2, this._crossTime());
     this.line.opacity = this.impactReal === null || this.sim.mode === 'split' || this.cut
       ? 0
       : 0.96 * smoothstep(FOCUS_SET, LINE_LIT, this.realTime - this.impactReal) * leaving;

@@ -215,8 +215,10 @@ export class JuiceSystem {
     }
   }
 
-  addSplat(x, z, radius, vx, vz, height, grow = 0.08) {
-    if (this.splatState.length >= MAX_SPLATS) return;
+  // `keep` is how much of what made it is still to be seen: a drop already
+  // taken into the sky leaves no mark.
+  addSplat(x, z, radius, vx, vz, height, grow = 0.08, keep = 1) {
+    if (this.splatState.length >= MAX_SPLATS || keep <= 0.001) return;
     const vh = Math.hypot(vx, vz);
     const stretch = 1 + Math.min(0.6, 0.08 * vh);
     this.splatState.push({
@@ -227,7 +229,7 @@ export class JuiceSystem {
       h: height,
       grow,
       age: 0,
-      keep: 1,
+      keep,
     });
   }
 
@@ -248,7 +250,7 @@ export class JuiceSystem {
         // the number of overlapping splats down.
         if (d.r > 0.009 || this.rand() < 0.4) {
           const spread = d.r * (1.5 + 0.9 * this.rand());
-          this.addSplat(d.p.x, d.p.z, spread, d.v.x, d.v.z, Math.min(0.018, 0.45 * spread));
+          this.addSplat(d.p.x, d.p.z, spread, d.v.x, d.v.z, Math.min(0.018, 0.45 * spread), undefined, d.keep);
         }
       }
     }
@@ -263,7 +265,7 @@ export class JuiceSystem {
         piece.q.premultiply(_q);
         if (piece.p.y < rest) {
           piece.p.y = rest;
-          if (!piece.splatted) this.addSplat(piece.p.x, piece.p.z, 0.1 * piece.s, piece.v.x, piece.v.z, 0.008);
+          if (!piece.splatted) this.addSplat(piece.p.x, piece.p.z, 0.1 * piece.s, piece.v.x, piece.v.z, 0.008, undefined, piece.keep);
           piece.splatted = true;
           if (piece.v.y < -1.4) {
             piece.v.y *= -0.22;
