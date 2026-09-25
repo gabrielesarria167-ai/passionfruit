@@ -21,7 +21,7 @@ const FOCUS_IN = 0;
 const FOCUS_SET = 1.70;
 const LINE_LIT = FOCUS_SET + 0.5;
 // The crossing opens as the hold on the line ends. From then on each piece
-// turns on its own, just before it would touch the floor: a drop of juice or
+// turns on its own, as it touches the floor: a drop of juice or
 // pulp lights up and falls into a real star, and so does most of the rind;
 // the rest catches light and comes back as a comet shooting down and to the
 // right. Whatever is still in the air keeps flying until its turn. The camera
@@ -31,10 +31,10 @@ const LINE_LIT = FOCUS_SET + 0.5;
 // time comes back to full speed quickly so the pieces come down.
 const SLOW_HOLD = 2.4;
 const SLOW_BACK = 2.9;
-// How long before it would touch the floor a piece turns, in seconds as seen.
-const LEAD = 0.1;
-// How long a piece takes to shrink away once it has turned: it is gone about
-// as it would have landed.
+// A piece turns when it touches the floor: the frame it would reach it, in
+// seconds as seen, so it is never caught short in the air nor sunk through.
+const LEAD = 1 / 60;
+// How long a piece takes to shrink away on the floor once it has turned.
 const TURN_FADE = 0.15;
 // What _crossTime() reads before the crossing opens.
 const PENDING = -1e9;
@@ -778,7 +778,7 @@ export class PassionfruitScene {
     this.crossing = { drops, shards, total, turned: 0, shown: 0, lastTurn: this.realTime, lastReal: this.realTime };
   }
 
-  // Each piece turns just before it would touch the floor: a drop lights up
+  // Each piece turns as it touches the floor: a drop lights up
   // and falls into a free star below it, and so does most of the rind; a
   // comet shoots off. Night comes up from the bottom of the frame as they go,
   // taking the floor and the puddles on it.
