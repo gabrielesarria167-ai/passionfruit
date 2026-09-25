@@ -20,13 +20,15 @@ const OPENER_WIDTH = 2.9;
 const FOCUS_IN = 0;
 const FOCUS_SET = 1.70;
 const LINE_LIT = FOCUS_SET + 0.5;
-// The crossing, in seconds after the impact. Once the line has been read time
-// all but stops and the camera sinks and tips its gaze down onto the scatter,
-// so the words rise away out of the frame. Night comes up from below: the
-// floor gives way to it, each drop of juice and pulp it reaches lights up and
-// falls into a real star, and each piece of rind catches light and falls on,
-// a comet.
-const CROSS_START = LINE_LIT + 1.2;
+// The crossing starts once nine pieces in ten (rind and pulp) have come down,
+// and the line is up. Then time all but stops and the camera sinks and tips
+// its gaze down onto the scatter, so the words rise away out of the frame.
+// Night comes up from below: the floor gives way to it, each drop of juice and
+// pulp it reaches lights up and falls into a real star, and each piece of rind
+// catches light and shoots off down and to the right, a comet.
+const LANDED = 0.9;
+// What _crossTime() reads while the pieces are still coming down.
+const PENDING = -1e9;
 const CROSS_MOVE = 2.8;
 const SINK = 1.1;
 const DOLLY = 0.6;
@@ -44,6 +46,9 @@ const SKY_COLOR = '#030409';
 // Without the camera move the crossing is a dissolve through the night.
 const STILL_FADE = 0.8;
 const COMET_TAILS = { purple: '#b95c9c', golden: '#e0a043' };
+// A comet's heading on screen, measured from straight down towards the right.
+const COMET_SLANT = 38 * DEG;
+const COMET_SPREAD = 14 * DEG;
 const ORIGIN = new THREE.Vector3();
 const _offset = new THREE.Matrix4();
 const _cling = new THREE.Matrix4();
@@ -56,7 +61,6 @@ const _dir = new THREE.Vector3();
 const _now = new THREE.Vector3();
 const _vel = new THREE.Vector3();
 const _ndc = new THREE.Vector3();
-const _down = new THREE.Vector3();
 const _fall = new THREE.Vector3();
 const _at = [0, 0];
 const _sky = new THREE.Color(SKY_COLOR);
@@ -138,6 +142,7 @@ export class PassionfruitScene {
     this.phase = 'loading';
     this.realTime = 0;
     this.impactReal = null;
+    this.crossAt = null;
     this.acc = 0;
     this.dropCount = 0;
     this.burstCentre = new THREE.Vector3(0, 1, 0);
@@ -450,6 +455,7 @@ export class PassionfruitScene {
     this.juice.reset();
     this.acc = 0;
     this.impactReal = null;
+    this.crossAt = null;
     this.restTime = 0;
     this._leaveSky();
 
@@ -470,6 +476,7 @@ export class PassionfruitScene {
       // A narrow frame cannot hold a wide scatter.
       power: this.aspect < 0.62 ? 0.55 : portrait ? 0.72 : 1,
     });
+    for (const b of this.sim.bodies) b.touched = false;
 
     this.phase = 'falling';
     this._emitPhase();
@@ -515,11 +522,12 @@ export class PassionfruitScene {
 
   // Real time runs slowest right at the impact, so the burst itself can be
   // watched, then eases back to full speed while the pieces come down.
-  // Just before the camera lifts into the sky time all but stops again, so
-  // what is still in the air hangs there to be turned into stars.
+  // Once the pieces are down and the camera lifts into the sky time all but
+  // stops again, so what is still in the air hangs there to be turned into
+  // stars.
   _timeScale() {
     if (this.reducedMotion) return 1;
-    return this._slowMotion() * (1 - 0.93 * smoothstep(-0.8, 0.1, this._crossTime()));
+    return this._slowMotion() * (1 - 0.93 * smoothstep(0, 0.5, this._crossTime()));
   }
 
   _slowMotion() {
@@ -597,7 +605,28 @@ export class PassionfruitScene {
 
   _stepSim(h) {
     this.sim.step(h);
-    if (this.sim.phase === 'open') this.juice.update(h);
+    if (this.sim.phase !== 'open') return;
+    this.juice.update(h);
+    for (const b of this.sim.bodies) if (b.inContact) b.touched = true;
+  }
+
+  // Start the crossing once enough of what the burst threw up has touched the
+  // floor, or once everything has come to rest.
+  _watchLanding() {
+    if (this.crossAt !== null || this.reducedMotion || this._crossTime() !== PENDING) return;
+    if (this.realTime - this.impactReal < LINE_LIT) return;
+    let n = 0;
+    let down = 0;
+    for (const b of this.sim.bodies) {
+      n++;
+      if (b.touched) down++;
+    }
+    for (const p of this.juice.pieceState) {
+      if (!p.alive) continue;
+      n++;
+      if (p.splatted) down++;
+    }
+    if (down >= LANDED * n || (this.sim.asleep && this.juice.settled)) this.crossAt = this.realTime;
   }
 
   _syncVisuals() {
@@ -685,7 +714,7 @@ export class PassionfruitScene {
   _crossTime() {
     if (this.options.transition !== 'stars' || this.sim.mode === 'split' || this.impactReal === null) return -Infinity;
     if (this.reducedMotion) return this.realTime - this.crossBase;
-    return this.realTime - this.impactReal - CROSS_START;
+    return this.crossAt === null ? PENDING : this.realTime - this.crossAt;
   }
 
   // Down: the camera sinks off the line and tips its gaze onto the floor, so
@@ -718,7 +747,7 @@ export class PassionfruitScene {
     const arilR = (ARIL_RADII.x + ARIL_RADII.y + ARIL_RADII.z) / 3;
     for (const src of this.juice.pieceState) if (src.alive) add(src, arilR * src.s, [-2, 5.5], true);
     for (const src of this.juice.dropState) if (src.alive) add(src, src.r, src.r > 0.018 ? [4, 6.5] : null);
-    const shards = this.shardViews.map((view) => ({ view, jitter: (rand() - 0.5) * 0.3, last: null, t0: null, rand: [rand(), rand(), rand()] }));
+    const shards = this.shardViews.map((view) => ({ view, jitter: (rand() - 0.5) * 0.3, last: null, t0: null, rand: [rand(), rand(), rand(), rand()] }));
     this.crossing = { drops, shards, lastReal: this.realTime };
   }
 
@@ -743,7 +772,9 @@ export class PassionfruitScene {
       item.last = (item.last || new THREE.Vector3()).copy(_now);
       if (!open || !seen) return 0;
       _ndc.copy(p).project(cam);
-      const inView = _ndc.z < 1 && Math.abs(_ndc.x) < 1.02 && Math.abs(_ndc.y) < 1.02;
+      // Pieces lying just off the sides or under the bottom edge still reach
+      // into the frame, close to the camera: they are taken too.
+      const inView = _ndc.z < 1 && Math.abs(_ndc.x) < 1.6 && _ndc.y < 1.02;
       return inView && _ndc.y < front + item.jitter ? dist : 0;
     };
 
@@ -793,7 +824,6 @@ export class PassionfruitScene {
       sp.keep = Math.min(sp.keep, 1 - smoothstep(0, 0.4, this.realTime - sp.gone));
     }
 
-    sky.toSky(_down.set(0, -1, 0).applyQuaternion(cam.quaternion), _down);
     for (const sh of crossing.shards) {
       const body = sh.view.body;
       if (sh.t0 !== null) {
@@ -804,19 +834,18 @@ export class PassionfruitScene {
       if (!dist) continue;
       sh.t0 = this.realTime;
       const size = Math.sqrt(sh.view.area);
-      const [r0, r1, r2] = sh.rand;
-      // Let go, it falls on the way it was thrown, out from the burst, and
-      // gathers speed.
-      _fall.set(body.pos.x - this.burstCentre.x, 0, body.pos.z - this.burstCentre.z).normalize().multiplyScalar(3).add(body.vel);
-      _fall.addScaledVector(_dir.copy(body.pos).sub(cam.position).normalize(), -_fall.dot(_dir));
-      sky.toSky(_fall, _fall);
-      _fall.normalize().addScaledVector(_down, 0.9).normalize();
+      const [r0, r1, r2, r3] = sh.rand;
+      // Every comet shoots off the same way, down and to the right across the
+      // frame, give or take a little.
+      const slant = COMET_SLANT + COMET_SPREAD * (r3 - 0.5);
+      sky.toSky(_fall.set(Math.sin(slant), -Math.cos(slant), 0).applyQuaternion(cam.quaternion), _fall);
+      const cruise = 0.08 + 0.09 * r0;
       this.comets.launch({
         time: this.realTime,
         dir: _now,
-        speed: Math.max(0, _vel.dot(_fall)),
+        speed: Math.max(cruise, _vel.dot(_fall)),
         heading: _fall,
-        cruise: 0.08 + 0.09 * r0,
+        cruise,
         glow: Math.min(28, Math.max(2, ((0.6 * size) / dist) * pxPerUnit)),
         bright: 0.45 + 0.8 * size,
         size: 0.7 + 1.3 * size,
@@ -940,6 +969,7 @@ export class PassionfruitScene {
         steps++;
       }
     }
+    this._watchLanding();
     // The words only come up once the camera has arrived, and go as it moves
     // on; the first line, left behind on the floor, goes with the floor.
     const leaving = 1 - smoothstep(0.4, 1.2, this._crossTime());
