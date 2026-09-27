@@ -68,14 +68,14 @@ export class JuiceSystem {
 
     this.dropState = [];
     for (let i = 0; i < MAX_DROPS; i++) {
-      this.dropState.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), r: 0, delay: 0, alive: false, keep: 1 });
+      this.dropState.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), r: 0, delay: 0, alive: false });
     }
     this.splatState = [];
     this.pieceState = [];
     for (let i = 0; i < MAX_PIECES; i++) {
       this.pieceState.push({
         p: new THREE.Vector3(), v: new THREE.Vector3(), q: new THREE.Quaternion(), w: new THREE.Vector3(),
-        restQ: new THREE.Quaternion(), s: 1, landed: false, splatted: false, alive: false, delay: 0, keep: 1,
+        restQ: new THREE.Quaternion(), s: 1, landed: false, splatted: false, alive: false, delay: 0,
       });
     }
     this.active = false;
@@ -112,8 +112,6 @@ export class JuiceSystem {
       } while (dir.y < -0.1 && tries < 8);
       const d = this.dropState[n++];
       d.alive = true;
-      d.keep = 1;
-      d.turned = false;
       d.delay = rand() * 0.07;
       d.r = rMin + (rMax - rMin) * Math.pow(rand(), 2.2);
       d.p.copy(center).addScaledVector(dir, 0.93 + 0.12 * rand()).addScaledVector(normal, (rand() - 0.5) * 0.07);
@@ -130,8 +128,6 @@ export class JuiceSystem {
       const psi = (rand() * 2 - 1) * 0.95;
       dir.copy(e2).multiplyScalar(Math.cos(psi)).addScaledVector(e1, Math.sin(psi));
       pc.alive = true;
-      pc.keep = 1;
-      pc.turned = false;
       pc.landed = false;
       pc.splatted = false;
       pc.delay = 0.015 + rand() * 0.05;
@@ -178,8 +174,6 @@ export class JuiceSystem {
       const up = 0.5 + 0.5 * dir.y;
       const d = this.dropState[n++];
       d.alive = true;
-      d.keep = 1;
-      d.turned = false;
       d.delay = rand() * 0.04;
       d.r = rMin + (rMax - rMin) * Math.pow(rand(), 2.2);
       d.p.copy(center).addScaledVector(dir, 0.75 + 0.25 * rand());
@@ -207,8 +201,6 @@ export class JuiceSystem {
       pc.v.copy(flat).multiplyScalar(speed * (0.6 + 0.6 * depth));
       pc.v.y = (slump ? 0.4 * rand() : 2.2 + 5.6 * rand()) * (0.35 + 0.65 * up) * power;
       pc.alive = true;
-      pc.keep = 1;
-      pc.turned = false;
       pc.landed = false;
       pc.splatted = false;
       pc.delay = rand() * 0.03;
@@ -219,10 +211,8 @@ export class JuiceSystem {
     }
   }
 
-  // `keep` is how much of what made it is still to be seen: a drop already
-  // taken into the sky (`turned`) leaves no mark.
-  addSplat(x, z, radius, vx, vz, height, grow = 0.08, keep = 1) {
-    if (this.splatState.length >= MAX_SPLATS || keep <= 0.001) return;
+  addSplat(x, z, radius, vx, vz, height, grow = 0.08) {
+    if (this.splatState.length >= MAX_SPLATS) return;
     const vh = Math.hypot(vx, vz);
     const stretch = 1 + Math.min(0.6, 0.08 * vh);
     this.splatState.push({
@@ -233,7 +223,6 @@ export class JuiceSystem {
       h: height,
       grow,
       age: 0,
-      keep,
     });
   }
 
@@ -242,6 +231,7 @@ export class JuiceSystem {
     this.age += dt;
     const g = this.gravity;
 
+    let count = 0;
     for (const d of this.dropState) {
       if (!d.alive) continue;
       if (this.age < d.delay) continue;
@@ -254,11 +244,21 @@ export class JuiceSystem {
         // the number of overlapping splats down.
         if (d.r > 0.009 || this.rand() < 0.4) {
           const spread = d.r * (1.5 + 0.9 * this.rand());
-          this.addSplat(d.p.x, d.p.z, spread, d.v.x, d.v.z, Math.min(0.018, 0.45 * spread), undefined, d.turned ? 0 : d.keep);
+          this.addSplat(d.p.x, d.p.z, spread, d.v.x, d.v.z, Math.min(0.018, 0.45 * spread));
         }
+        continue;
       }
+      const speed = d.v.length();
+      _d.copy(d.v).divideScalar(speed || 1);
+      _q.setFromUnitVectors(UP, _d);
+      _s.set(d.r, d.r * (1 + Math.min(1.6, 0.09 * speed)), d.r);
+      _m.compose(d.p, _q, _s);
+      this.drops.setMatrixAt(count++, _m);
     }
+    this.drops.count = count;
+    if (count) this.drops.filter.instanceMatrix.needsUpdate = true;
 
+    let pc = 0;
     for (const piece of this.pieceState) {
       if (!piece.alive || this.age < piece.delay) continue;
       const rest = 0.1 * piece.s;
@@ -269,7 +269,7 @@ export class JuiceSystem {
         piece.q.premultiply(_q);
         if (piece.p.y < rest) {
           piece.p.y = rest;
-          if (!piece.splatted) this.addSplat(piece.p.x, piece.p.z, 0.1 * piece.s, piece.v.x, piece.v.z, 0.008, undefined, piece.turned ? 0 : piece.keep);
+          if (!piece.splatted) this.addSplat(piece.p.x, piece.p.z, 0.1 * piece.s, piece.v.x, piece.v.z, 0.008);
           piece.splatted = true;
           if (piece.v.y < -1.4) {
             piece.v.y *= -0.22;
@@ -287,34 +287,7 @@ export class JuiceSystem {
         piece.q.slerp(piece.restQ, 1 - Math.exp(-10 * dt));
         piece.p.y += (rest - piece.p.y) * (1 - Math.exp(-10 * dt));
       }
-    }
-
-    for (const sp of this.splatState) sp.age += dt;
-  }
-
-  // Write everything's current place into the instanced meshes. Each drop,
-  // piece and splat is drawn at `keep` of its size.
-  sync() {
-    if (!this.active) return;
-    let count = 0;
-    for (const d of this.dropState) {
-      if (!d.alive || this.age < d.delay || d.keep <= 0.001) continue;
-      const speed = d.v.length();
-      _d.copy(d.v).divideScalar(speed || 1);
-      _q.setFromUnitVectors(UP, _d);
-      const r = d.r * d.keep;
-      _s.set(r, r * (1 + Math.min(1.6, 0.09 * speed)), r);
-      _m.compose(d.p, _q, _s);
-      this.drops.setMatrixAt(count++, _m);
-    }
-    this.drops.count = count;
-    if (count) this.drops.filter.instanceMatrix.needsUpdate = true;
-
-    let pc = 0;
-    for (const piece of this.pieceState) {
-      if (!piece.alive || this.age < piece.delay || piece.keep <= 0.001) continue;
-      const k = piece.s * piece.keep;
-      _s.set(k, k * (piece.landed ? 0.92 : 1), k);
+      _s.set(piece.s, piece.s * (piece.landed ? 0.92 : 1), piece.s);
       _m.compose(piece.p, piece.q, _s);
       this.pieces.setMatrixAt(pc, _m);
       _m.multiply(_seedOffset);
@@ -331,11 +304,12 @@ export class JuiceSystem {
     const splats = this.splatState;
     for (let i = 0; i < splats.length; i++) {
       const sp = splats[i];
+      sp.age += dt;
       const grow = 1 - Math.pow(1 - Math.min(1, sp.age / sp.grow), 3);
-      const k = (0.3 + 0.7 * grow) * sp.keep;
+      const k = 0.3 + 0.7 * grow;
       _p.set(sp.x, 0.0006 + i * 0.00001, sp.z);
       _q.setFromAxisAngle(UP, sp.yaw);
-      _s.set(sp.sx * k, sp.h * sp.keep, sp.sz * k);
+      _s.set(sp.sx * k, sp.h, sp.sz * k);
       _m.compose(_p, _q, _s);
       this.splats.setMatrixAt(i, _m);
     }

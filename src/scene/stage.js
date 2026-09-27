@@ -132,9 +132,6 @@ export class Stage {
     for (const key of ['aril', 'jelly', 'juice', 'splat']) {
       materials[key].glow = materials[key].baseGlow * (1 + 2.5 * this.glowScale);
     }
-    // Pulp and juice are solid: over anything they show the set behind them.
-    materials.aril.behind = this.background;
-    materials.juice.behind = this.background;
     return b;
   }
 
