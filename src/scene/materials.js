@@ -234,11 +234,8 @@ function createPithMaterial() {
 // by the jelly's colour (deeper amber toward the silhouette, where light
 // crosses more of it), then `shine` adds the specular, clearcoat and a little
 // scattered light on top. Seeds behind stay dark, the rind behind turns gold.
-// A `solid` pair also gets a `backing`: its back faces, drawn opaque first, so
-// that whatever lies behind the jelly (the words, the stars, other pieces) no
-// longer shows through it, while the seed inside still does.
-function createJellyPair({ key, scatter, glow, roughness, bump = 0, bumpScale = 1, polygonOffset = false, solid = false }) {
-  const uniforms = { uCoreT: colorUniform('#ffd98c'), uEdgeT: colorUniform('#e0892f'), uBehind: { value: new THREE.Color(0, 0, 0) } };
+function createJellyPair({ key, scatter, glow, roughness, bump = 0, bumpScale = 1, polygonOffset = false }) {
+  const uniforms = { uCoreT: colorUniform('#ffd98c'), uEdgeT: colorUniform('#e0892f') };
   const shineUniforms = { uGlow: { value: glow } };
   const offset = polygonOffset
     ? { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }
@@ -331,27 +328,9 @@ function createJellyPair({ key, scatter, glow, roughness, bump = 0, bumpScale = 
   };
   shine.customProgramCacheKey = () => `${key}-shine`;
 
-  // The inside of the far wall of the sac: the jelly's own amber, as deep as
-  // it looks over the dark set, over the colour of the set itself.
-  const backing = solid ? new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide, fog: false }) : null;
-  if (backing) {
-    backing.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, uniforms);
-      shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform vec3 uEdgeT;\nuniform vec3 uBehind;')
-        .replace(
-          '#include <opaque_fragment>',
-          /* glsl */ `outgoingLight = diffuseColor.rgb * uEdgeT * (uBehind + vec3(0.035));
-          #include <opaque_fragment>`,
-        );
-    };
-    backing.customProgramCacheKey = () => `${key}-backing`;
-  }
-
   return {
     filter,
     shine,
-    backing,
     set(core, edge, body) {
       uniforms.uCoreT.value.set(core);
       uniforms.uEdgeT.value.set(edge);
@@ -360,17 +339,12 @@ function createJellyPair({ key, scatter, glow, roughness, bump = 0, bumpScale = 
     set glow(v) {
       shineUniforms.uGlow.value = v;
     },
-    // The set behind a solid pair, kept by reference so it follows nightfall.
-    set behind(color) {
-      uniforms.uBehind.value = color;
-    },
     get glow() {
       return shineUniforms.uGlow.value;
     },
     dispose() {
       filter.dispose();
       shine.dispose();
-      if (backing) backing.dispose();
     },
   };
 }
@@ -441,30 +415,8 @@ function createStemMaterial() {
 
 // A smooth, matte sweep: no texture and no specular, so a light close to the
 // floor spreads as an even pool instead of a streak.
-// The floor can give way to the night: below `night` (a height across the
-// frame, -1 at the bottom to 1 at the top) it is gone, with a grainy edge,
-// and whatever is behind it shows through.
 function createGroundMaterial() {
-  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-  const uniforms = { uNight: { value: -2 }, uViewH: { value: 1 } };
-  mat.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, uniforms);
-    shader.fragmentShader = shader.fragmentShader
-      .replace('void main() {', 'uniform float uNight;\nuniform float uViewH;\nvoid main() {')
-      .replace(
-        '#include <clipping_planes_fragment>',
-        `#include <clipping_planes_fragment>
-        float pfY = gl_FragCoord.y / uViewH * 2.0 - 1.0;
-        float pfGrain = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453);
-        if (smoothstep(uNight - 0.3, uNight + 0.02, pfY) < pfGrain) discard;`,
-      );
-  };
-  mat.customProgramCacheKey = () => 'pf-ground';
-  mat.setNight = (y, viewH) => {
-    uniforms.uNight.value = y;
-    uniforms.uViewH.value = viewH;
-  };
-  return mat;
+  return new THREE.MeshLambertMaterial({ color: 0xffffff });
 }
 
 // Two instanced meshes (filter + shine) drawing the same instances.
@@ -475,28 +427,20 @@ export function createJellyInstances(geometry, pair, count, renderOrder) {
   filter.renderOrder = renderOrder;
   shine.renderOrder = renderOrder + 1;
   shine.layers.enable(1); // lit by the fruit's own lights
-  const meshes = [filter, shine];
-  let backing = null;
-  if (pair.backing) {
-    backing = new THREE.InstancedMesh(geometry, pair.backing, count);
-    backing.instanceMatrix = filter.instanceMatrix;
-    backing.renderOrder = renderOrder;
-    meshes.unshift(backing);
-  }
   return {
     filter,
     shine,
-    meshes,
+    meshes: [filter, shine],
     setMatrixAt(i, m) {
       filter.setMatrixAt(i, m);
     },
     setColorAt(i, c) {
       filter.setColorAt(i, c);
       shine.instanceColor = filter.instanceColor;
-      if (backing) backing.instanceColor = filter.instanceColor;
     },
     set count(n) {
-      for (const mesh of meshes) mesh.count = n;
+      filter.count = n;
+      shine.count = n;
     },
     get count() {
       return filter.count;
@@ -506,7 +450,6 @@ export function createJellyInstances(geometry, pair, count, renderOrder) {
       if (filter.instanceColor) filter.instanceColor.needsUpdate = true;
       filter.computeBoundingSphere();
       shine.boundingSphere = filter.boundingSphere;
-      if (backing) backing.boundingSphere = filter.boundingSphere;
     },
   };
 }
@@ -515,12 +458,12 @@ export function createMaterials() {
   const m = {
     skin: createSkinMaterial(),
     pith: createPithMaterial(),
-    aril: createJellyPair({ key: 'pf-aril', scatter: 0.1, glow: 0.015, roughness: 0.06, bump: 0.0005, bumpScale: 9, solid: true }),
+    aril: createJellyPair({ key: 'pf-aril', scatter: 0.1, glow: 0.015, roughness: 0.06, bump: 0.0005, bumpScale: 9 }),
     jelly: createJellyPair({ key: 'pf-jelly', scatter: 0.05, glow: 0.01, roughness: 0.1, bump: 0.0008, bumpScale: 7 }),
     seed: createSeedMaterial(),
     stem: createStemMaterial(),
     ground: createGroundMaterial(),
-    juice: createJellyPair({ key: 'pf-juice', scatter: 0.08, glow: 0.02, roughness: 0.03, solid: true }),
+    juice: createJellyPair({ key: 'pf-juice', scatter: 0.08, glow: 0.02, roughness: 0.03 }),
     splat: createJellyPair({ key: 'pf-splat', scatter: 0.04, glow: 0.01, roughness: 0.03, polygonOffset: true }),
   };
 
