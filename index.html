@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Passionfruit</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,6 +19,11 @@
   .mark { position: absolute; left: 40px; top: 28px; margin: 0; font-family: 'Gloock', Georgia, serif; font-weight: 400; font-size: 30px; letter-spacing: 0.005em; }
   .replay { position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 20px 0 16px; border: 1px solid var(--line); border-radius: 999px; background: var(--chip); color: var(--ink); font: 500 15px/1 'Instrument Sans', system-ui, sans-serif; cursor: pointer; }
   .replay:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  @media (max-width: 600px) {
+    .stage { min-height: 0; }
+    .mark { left: 16px; top: max(16px, env(safe-area-inset-top)); font-size: 22px; }
+    .replay { bottom: max(20px, env(safe-area-inset-bottom)); height: 40px; font-size: 14px; }
+  }
 </style>
 </head>
 <body>

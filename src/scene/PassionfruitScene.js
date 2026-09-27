@@ -39,6 +39,20 @@ const smoothstep = (e0, e1, x) => {
   return t * t * (3 - 2 * t);
 };
 
+// Breaks a line at the space that leaves its two rows closest in length.
+function splitRows(text) {
+  const words = text.split(' ');
+  if (words.length < 2) return [text];
+  let best = null;
+  for (let i = 1; i < words.length; i++) {
+    const a = words.slice(0, i).join(' ');
+    const b = words.slice(i).join(' ');
+    const score = Math.max(a.length, b.length);
+    if (!best || score < best.score) best = { score, rows: [a, b] };
+  }
+  return best.rows;
+}
+
 // Renders the drop: a whole fruit falls into frame, hits the surface and either
 // bursts (rind shards, pulp and juice thrown across the floor) or tears in two
 // and the halves roll onto their backs.
@@ -204,15 +218,15 @@ export class PassionfruitScene {
 
     this._buildCling();
 
-    // Both lines stand in the scene rather than on top of it. The first waits
-    // low, under the fall, and the camera simply leaves it behind; the second
-    // is high and behind the plume, so the pieces cross in front of the words.
+    // Both lines stand in the scene. The first waits low, under the fall, and
+    // the camera simply leaves it behind; the second is high over the plume and
+    // is drawn in front of it, so the pieces pass behind the words.
     this.opener = new TextPlane({ text: this.options.opener, width: OPENER_WIDTH });
     this.opener.mesh.position.set(0, 0.16, 4.2);
     this.opener.opacity = 0.9;
     this.scene.add(this.opener.mesh);
 
-    this.line = new TextPlane({ text: this.options.line, width: LINE_WIDTH });
+    this.line = new TextPlane({ text: this.options.line, width: LINE_WIDTH, overlay: true });
     this.line.mesh.position.set(0, 2.9, -1);
     this.scene.add(this.line.mesh);
 
@@ -576,8 +590,13 @@ export class PassionfruitScene {
     // line behind — and the second line is sized to fill that final shot.
     const halfW = (d) => tanV * aspect * d;
     const close = Math.min(wide * 0.72, Math.max(LINE_WIDTH / (1.72 * tanV * aspect), 1.9 / tanV));
-    const lineWidth = Math.min(LINE_WIDTH, 1.72 * halfW(close));
+    // On a narrow screen the line breaks in two so its type stays at least as
+    // large as the first line's instead of shrinking to fit the width.
+    this.line.setRows(portrait ? splitRows(this.options.line) : [this.options.line]);
+    const lineWidth = Math.min(LINE_WIDTH, (portrait ? 1.8 : 1.72) * halfW(close));
     this.line.mesh.scale.setScalar(lineWidth / LINE_WIDTH);
+    // Extra rows grow upward, so the lowest one stays clear of the plume.
+    this.line.mesh.position.y = 2.9 + ((this.line.rows.length - 1) * lineWidth) / 8;
     this.opener.mesh.scale.setScalar(Math.min(1, (1.5 * halfW(wide)) / OPENER_WIDTH));
     const f = this._focus();
     const dist = THREE.MathUtils.lerp(wide, close, f);
